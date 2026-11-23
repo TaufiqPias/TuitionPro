@@ -1,7 +1,7 @@
 /* ============ CONFIG ============
    The Apps Script URL lives in config.js (so you never have to edit this file). */
 const API_URL = (window.TP_CONFIG && window.TP_CONFIG.API_URL) || "";
-const NEED_BUILD = "3"; // must match BUILD in Code.gs
+const NEED_BUILD = "4"; // must match BUILD in Code.gs
 const POLL_MS = 10000;
 const CLASSES = [
   "1",
@@ -46,6 +46,8 @@ const ICON = {
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
   trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3"/>',
+  prev: '<path d="M15 6l-6 6 6 6"/>',
+  next: '<path d="M9 6l6 6-6 6"/>',
 };
 const VIEWS = {
   dash: "Dashboard",
@@ -283,7 +285,8 @@ function applyMe() {
   $("#upop").innerHTML = `<div class="who"><b>${esc(n)}</b><small>@${esc(ME.id)} · ${ME.role === "master" ? "Master Admin" : "User"}</small></div>
    <button class="btn" onclick="go('profile')">My profile</button><button class="btn" onclick="logout()">Sign out</button>`;
 }
-function go(r) { route = r; history.replaceState(null, "", "#" + r); $("#app").classList.remove("mob"); closePops(); render(); }
+function go(r) {
+  if (route === "attendance" && r !== "attendance" && AT.dirty.size && !confirm("You have unsaved attendance changes. Leave without saving?")) return; route = r; history.replaceState(null, "", "#" + r); $("#app").classList.remove("mob"); closePops(); render(); }
 function toggleSb() {
   const a = $("#app");
   if (innerWidth <= 820) a.classList.toggle("mob");
@@ -300,7 +303,7 @@ function render() {
   if (route === "admin" && ME.role !== "master") route = "dash";
   document.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === route));
   $("#title").textContent = VIEWS[route];
-  ({ dash: vDash, students: vStudents, profile: vProfile, admin: vAdmin }[route] || vSoon)();
+  ({ dash: vDash, students: vStudents, attendance: vAttendance, profile: vProfile, admin: vAdmin }[route] || vSoon)();
 }
 
 /* ============ CLASS / BATCH / STUDENT-ID HELPERS ============ */
@@ -808,6 +811,132 @@ async function downloadTemplate() {
   a.href = URL.createObjectURL(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
   a.download = "student-import-template.xlsx"; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+}
+
+/* ============ ATTENDANCE ============ */
+const MARKS = ["Present", "Absent", "Late"];
+const WD = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+const AT = { tab: "take", batch: "", date: "", month: "", marks: {}, dirty: new Set() };
+const dKey = (d) => d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+const dateObj = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
+const shiftDate = (s, n) => { const d = dateObj(s); d.setDate(d.getDate() + n); return dKey(d); };
+const shiftMonth = (s, n) => { const [y, m] = s.split("-").map(Number); const d = new Date(y, m - 1 + n, 1); return d.getFullYear() + "-" + pad2(d.getMonth() + 1); };
+const batchStudents = (bid) => DB.Students.filter((s) => s.batchId === bid && s.status === "Active").sort((a, b) => String(a.sid).localeCompare(String(b.sid)));
+function loadMarks() {
+  AT.marks = {};
+  DB.Attendance.forEach((r) => { if (r.batchId === AT.batch && r.date === AT.date) AT.marks[r.studentId] = r.status; });
+}
+function atGuard() { return !AT.dirty.size || confirm("You have unsaved attendance changes. Discard them?"); }
+function atSet(k, v) {
+  if (!atGuard()) { vAttendance(); return; }
+  AT[k] = v; AT.dirty.clear(); loadMarks(); vAttendance();
+}
+const atDay = (n) => atSet("date", shiftDate(AT.date, n));
+const atMonth = (n) => atSet("month", shiftMonth(AT.month, n));
+window.addEventListener("beforeunload", (e) => { if (AT.dirty.size) { e.preventDefault(); e.returnValue = ""; } });
+
+function vAttendance() {
+  if (!DB.Batches.length) {
+    $("#view").innerHTML = `<div class="glass pad empty">Create a class and batch first, then you can take attendance.<br><br><button class="btn p" onclick="editBatch()">Add Class/Batch</button></div>`;
+    return;
+  }
+  const B = sortBatches(DB.Batches);
+  if (!AT.date) AT.date = dKey(new Date());
+  if (!AT.month) AT.month = AT.date.slice(0, 7);
+  if (!B.some((b) => b.id === AT.batch)) { const t = WD[new Date().getDay()]; AT.batch = (B.find((b) => dayCodes(b).includes(t)) || B[0]).id; AT.dirty.clear(); }
+  if (!AT.dirty.size) loadMarks();
+  const take = AT.tab === "take";
+  $("#view").innerHTML = `
+  <div class="glass tools">
+   <div class="tabs"><button class="${take ? "on" : ""}" onclick="atSet('tab','take')">Take attendance</button><button class="${take ? "" : "on"}" onclick="atSet('tab','report')">Monthly report</button></div>
+   <select class="in grow" id="at_batch">${B.map((b) => `<option value="${esc(b.id)}" ${AT.batch === b.id ? "selected" : ""}>${esc(bLabel(b))}</option>`).join("")}</select>
+   ${take
+     ? `${icoBtn("", "Previous day", "atDay(-1)", "prev")}<input class="in" type="date" id="at_date" value="${AT.date}">${icoBtn("", "Next day", "atDay(1)", "next")}<button class="btn" onclick="atSet('date', dKey(new Date()))">Today</button>`
+     : `${icoBtn("", "Previous month", "atMonth(-1)", "prev")}<input class="in" type="month" id="at_month" value="${AT.month}">${icoBtn("", "Next month", "atMonth(1)", "next")}<button class="btn" onclick="atExport()">Export Excel</button>`}
+  </div>
+  <div id="at_body"></div>`;
+  $("#at_batch").onchange = (e) => atSet("batch", e.target.value);
+  if (take) { $("#at_date").onchange = (e) => e.target.value && atSet("date", e.target.value); atTake(); }
+  else { $("#at_month").onchange = (e) => e.target.value && atSet("month", e.target.value); atReport(); }
+}
+
+function atTake() {
+  const S = batchStudents(AT.batch), b = DB.Batches.find((x) => x.id === AT.batch);
+  const cnt = { Present: 0, Absent: 0, Late: 0 };
+  S.forEach((s) => { const m = AT.marks[s.id]; if (m && cnt[m] !== undefined) cnt[m]++; });
+  const left = S.length - cnt.Present - cnt.Absent - cnt.Late;
+  const off = b && dayCodes(b).length && !dayCodes(b).includes(WD[dateObj(AT.date).getDay()]);
+  $("#at_body").innerHTML = `
+  ${off ? `<div class="warnbox" style="margin-bottom:12px">${dateObj(AT.date).toLocaleDateString(undefined, { weekday: "long" })} is not a regular class day for this batch ${daysTag(b)}. You can still take attendance.</div>` : ""}
+  <div class="glass tools">
+   <span class="chip s-Present">${cnt.Present} Present</span><span class="chip s-Absent">${cnt.Absent} Absent</span><span class="chip s-Late">${cnt.Late} Late</span><span class="chip s-Inactive">${left} Not marked</span>
+   ${AT.dirty.size ? `<span class="chip s-Suspended">Unsaved changes</span>` : ""}
+   <span style="flex:1"></span>
+   <button class="btn" onclick="atAll('Present')">All present</button><button class="btn" onclick="atAll('')">Clear</button>
+   <button class="btn p" onclick="atSave()" ${AT.dirty.size ? "" : "disabled"}>Save attendance</button>
+  </div>
+  <div class="rows">${
+    S.map((s) => `<div class="glass arow"><div class="av">${init(s.name)}</div><div class="ai"><b>${esc(s.name)}</b><small>${esc(s.sid)}</small></div>
+     <div class="seg">${MARKS.map((m) => `<button class="${m[0].toLowerCase()} ${AT.marks[s.id] === m ? "on" : ""}" onclick="atMark('${s.id}','${m}')" title="${m}"><span class="long">${m}</span><span class="short">${m[0]}</span></button>`).join("")}</div></div>`).join("") ||
+    `<div class="glass empty">No active students in this batch yet. Add students and assign them to this batch.</div>`}</div>`;
+}
+function atMark(id, m) {
+  AT.marks[id] === m ? delete AT.marks[id] : (AT.marks[id] = m);
+  AT.dirty.add(id); atTake();
+}
+function atAll(m) {
+  batchStudents(AT.batch).forEach((s) => { if ((AT.marks[s.id] || "") !== m) { m ? (AT.marks[s.id] = m) : delete AT.marks[s.id]; AT.dirty.add(s.id); } });
+  atTake();
+}
+async function atSave() {
+  const rows = [], gone = [];
+  AT.dirty.forEach((id) => {
+    const rid = AT.date + "_" + id, st = AT.marks[id];
+    if (st) rows.push({ id: rid, date: AT.date, studentId: id, batchId: AT.batch, status: st });
+    else if (DB.Attendance.some((r) => r.id === rid)) gone.push(rid);
+  });
+  DB.Attendance = DB.Attendance.filter((r) => !rows.some((x) => x.id === r.id) && !gone.includes(r.id)).concat(rows);
+  AT.dirty.clear(); atTake();
+  let ok = true;
+  if (rows.length) ok = await write("saveMany", { table: "Attendance", rows, upsert: true }, gone.length ? "" : `Attendance saved (${rows.length})`);
+  for (const id of gone) { if (!ok) break; ok = await write("remove", { table: "Attendance", id }, ""); }
+  if (ok && gone.length) toast("Attendance saved");
+}
+
+// ----- monthly report -----
+function repData() {
+  const [y, mo] = AT.month.split("-").map(Number), days = new Date(y, mo, 0).getDate();
+  const recs = DB.Attendance.filter((r) => r.batchId === AT.batch && String(r.date).startsWith(AT.month));
+  const ids = new Set(batchStudents(AT.batch).map((s) => s.id)); recs.forEach((r) => ids.add(r.studentId));
+  const S = [...ids].map((id) => DB.Students.find((s) => s.id === id)).filter(Boolean).sort((a, b) => String(a.sid).localeCompare(String(b.sid)));
+  const at = {}; recs.forEach((r) => (at[r.studentId + "|" + Number(String(r.date).slice(8, 10))] = r.status));
+  const held = new Set(recs.map((r) => r.date)).size;
+  const rowsOut = S.map((s) => {
+    const c = { Present: 0, Absent: 0, Late: 0 };
+    for (let d = 1; d <= days; d++) { const m = at[s.id + "|" + d]; if (m) c[m]++; }
+    return { s, c, pct: held ? Math.round(((c.Present + c.Late) / held) * 100) : 0 };
+  });
+  return { y, mo, days, at, held, rowsOut };
+}
+function atReport() {
+  const b = DB.Batches.find((x) => x.id === AT.batch), R = repData(), cls = dayCodes(b || {});
+  const head = Array.from({ length: R.days }, (_, i) => { const wd = WD[new Date(R.y, R.mo - 1, i + 1).getDay()]; return `<th class="${cls.length && !cls.includes(wd) ? "off" : ""}">${i + 1}<small>${wd[0]}</small></th>`; }).join("");
+  $("#at_body").innerHTML = `<div class="glass tw"><table class="rep"><thead><tr><th class="stick">Student</th>${head}<th>P</th><th>A</th><th>L</th><th>%</th></tr></thead><tbody>${
+    R.rowsOut.map(({ s, c, pct }) => `<tr><td class="stick"><b>${esc(s.name)}</b><small class="mut" style="display:block">${esc(s.sid)}</small></td>${
+      Array.from({ length: R.days }, (_, i) => { const m = R.at[s.id + "|" + (i + 1)]; return `<td>${m ? `<span class="mk ${m[0]}" title="${m}">${m[0]}</span>` : ""}</td>`; }).join("")}
+     <td>${c.Present}</td><td>${c.Absent}</td><td>${c.Late}</td><td><span class="chip ${pct >= 80 ? "s-Present" : pct >= 60 ? "s-Late" : "s-Absent"}">${pct}%</span></td></tr>`).join("") ||
+    `<tr><td colspan="${R.days + 5}"><div class="empty">No students in this batch.</div></td></tr>`}</tbody></table></div>
+  <p class="mut" style="font-size:12px;margin:8px 2px">${R.held} class day${R.held === 1 ? "" : "s"} recorded this month. Percentage = (Present + Late) ÷ days recorded. Greyed columns are not regular class days.</p>`;
+}
+async function atExport() {
+  const R = repData(), b = DB.Batches.find((x) => x.id === AT.batch);
+  if (!R.rowsOut.length) { toast("Nothing to export"); return; }
+  if (!(await lib("xlsx"))) { toast("Excel library failed to load. Check your internet connection."); return; }
+  const aoa = [["Student ID", "Name", ...Array.from({ length: R.days }, (_, i) => i + 1), "Present", "Absent", "Late", "%"]];
+  R.rowsOut.forEach(({ s, c, pct }) => aoa.push([s.sid, s.name, ...Array.from({ length: R.days }, (_, i) => (R.at[s.id + "|" + (i + 1)] || "")[0] || ""), c.Present, c.Absent, c.Late, pct]));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "Attendance");
+  XLSX.writeFile(wb, `attendance-${AT.month}-${bLabel(b).replace(/[^\w-]+/g, "_")}.xlsx`);
 }
 
 /* ============ PROFILE ============ */

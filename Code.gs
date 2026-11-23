@@ -23,14 +23,14 @@ const ROOT_NAME = 'TuitionPro';               // top-level Drive folder
 const DATA = {
   Students:   ['id','sid','name','class','section','batch','batchId','guardian','phone','fee','status','joined','updated','roll'],
   Batches:    ['id','class','section','name','start','days'],
-  Attendance: ['id','date','studentId','status'],
+  Attendance: ['id','date','studentId','batchId','status'],
   Fees:       ['id','studentId','month','amount','paid','date'],
   Results:    ['id','studentId','exam','subject','marks','total']
 };
 const USERS = ['id','salt','hash','role','status','name','email','phone','address','speciality','trainers','services','logo','photo','token','exp','created','folderId','sheetId','note'];
 const PROFILE = ['name','email','phone','address','speciality','trainers','services','logo','photo'];
 const DAY = 864e5;
-const BUILD = '3'; // the app compares this to know whether you deployed the latest Code.gs
+const BUILD = '4'; // the app compares this to know whether you deployed the latest Code.gs
 
 /* ---------- small helpers ---------- */
 const P_ = () => PropertiesService.getScriptProperties();
