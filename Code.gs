@@ -25,12 +25,13 @@ const DATA = {
   Batches:    ['id','class','section','name','start','days'],
   Attendance: ['id','date','studentId','batchId','status'],
   Fees:       ['id','studentId','month','amount','paid','date','kind','method','note','rcpt','batchId'],
-  Results:    ['id','studentId','exam','subject','marks','total']
+  Exams:      ['id','name','subject','chapters','date','batchId','wf','mf','pf','vf','full','eachPass','created'],
+  Results:    ['id','examId','studentId','w','m','p','v','absent','total','pct','grade','gpa']
 };
-const USERS = ['id','salt','hash','role','status','name','email','phone','address','speciality','trainers','services','logo','photo','token','exp','created','folderId','sheetId','note'];
-const PROFILE = ['name','email','phone','address','speciality','trainers','services','logo','photo'];
+const USERS = ['id','salt','hash','role','status','name','email','phone','address','speciality','trainers','services','logo','photo','lh1','lh2','lh3','lh4','token','exp','created','folderId','sheetId','note'];
+const PROFILE = ['name','email','phone','address','speciality','trainers','services','logo','photo','lh1','lh2','lh3','lh4'];
 const DAY = 864e5;
-const BUILD = '5'; // the app compares this to know whether you deployed the latest Code.gs
+const BUILD = '6'; // the app compares this to know whether you deployed the latest Code.gs
 
 /* ---------- small helpers ---------- */
 const P_ = () => PropertiesService.getScriptProperties();
@@ -203,6 +204,7 @@ function doPost(e) {
   try {
     const q = JSON.parse(e.postData.contents), a = q.action;
     const sys = sys_(), users = sys.getSheetByName('Users');
+    ensureCols_(users, USERS);
     seedMaster_(users);
     const U = rows_(users);
 
@@ -274,6 +276,18 @@ function doPost(e) {
       case 'remove': {
         if (!DATA[q.table]) return err_('Unknown table');
         del_(ws_(users, u).getSheetByName(q.table), q.id);
+        bump_(u.id);
+        return out_({ ok: true, ver: curVer_(u) });
+      }
+
+      case 'removeWhere': { // delete every row of a table whose column equals a value (e.g. all results of one exam)
+        if (!DATA[q.table] || !q.field) return err_('Bad request');
+        const sh = ws_(users, u).getSheetByName(q.table);
+        if (sh.getLastRow() >= 2) {
+          const v = sh.getDataRange().getValues(), ci = v[0].indexOf(q.field);
+          if (ci < 0) return err_('Unknown column');
+          for (let i = v.length - 1; i >= 1; i--) if (String(v[i][ci]) === String(q.value)) sh.deleteRow(i + 1);
+        }
         bump_(u.id);
         return out_({ ok: true, ver: curVer_(u) });
       }

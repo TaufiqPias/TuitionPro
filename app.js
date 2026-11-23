@@ -1,7 +1,7 @@
 /* ============ CONFIG ============
    The Apps Script URL lives in config.js (so you never have to edit this file). */
 const API_URL = (window.TP_CONFIG && window.TP_CONFIG.API_URL) || "";
-const NEED_BUILD = "5"; // must match BUILD in Code.gs
+const NEED_BUILD = "6"; // must match BUILD in Code.gs
 const POLL_MS = 10000;
 const CLASSES = [
   "1",
@@ -73,7 +73,7 @@ const NAVICON = {
 };
 
 /* ============ STATE & HELPERS ============ */
-let DB = { Students: [], Batches: [], Attendance: [], Fees: [], Results: [] },
+let DB = { Students: [], Batches: [], Attendance: [], Fees: [], Exams: [], Results: [] },
   ME = {},
   ADMIN = { users: [] },
   PEND = 0,
@@ -150,19 +150,20 @@ async function api(action, p = {}) {
 }
 function local(a, p) { // browser-only demo so the interface can be tried without a backend
   const s = JSON.parse(localStorage.getItem("tuitionpro") || "null") || {
-    data: { Students: [], Batches: [], Attendance: [], Fees: [], Results: [] },
+    data: { Students: [], Batches: [], Attendance: [], Fees: [], Exams: [], Results: [] },
     me: { id: "demo", role: "master", name: "TuitionPro Demo" },
     ver: "0",
   };
   if (a === "save") { const l = (s.data[p.table] = s.data[p.table] || []), i = l.findIndex((x) => x.id === p.row.id); i < 0 ? l.push(p.row) : (l[i] = p.row); }
   if (a === "saveMany") { const l = (s.data[p.table] = s.data[p.table] || []); p.rows.forEach((r) => { const i = l.findIndex((x) => x.id === r.id); i < 0 ? l.push(r) : p.upsert && (l[i] = r); }); }
   if (a === "remove") s.data[p.table] = s.data[p.table].filter((x) => x.id !== p.id);
+  if (a === "removeWhere") s.data[p.table] = (s.data[p.table] || []).filter((x) => String(x[p.field]) !== String(p.value));
   if (a === "profile") Object.assign(s.me, p.fields);
-  if (["save", "saveMany", "remove", "profile"].includes(a)) { s.ver = String(Date.now()); localStorage.setItem("tuitionpro", JSON.stringify(s)); }
+  if (["save", "saveMany", "remove", "removeWhere", "profile"].includes(a)) { s.ver = String(Date.now()); localStorage.setItem("tuitionpro", JSON.stringify(s)); }
   return Promise.resolve({ ok: true, ver: s.ver, data: s.data, me: s.me, admin: { users: [] } });
 }
 function applyData(j) {
-  DB = j.data; DB.Batches = DB.Batches || [];
+  DB = j.data; DB.Batches = DB.Batches || []; DB.Exams = DB.Exams || []; DB.Results = DB.Results || [];
   ME = j.me; ADMIN = j.admin || { users: [] }; VER = j.ver;
   PEND = ADMIN.users.filter((x) => x.status === "pending").length;
   document.body.classList.remove("locked"); $("#login").hidden = true;
@@ -265,7 +266,7 @@ $("#lf").onsubmit = async (e) => {
 async function logout() {
   if (!API_URL) { toast("Local mode has no sign-in"); return; }
   try { await api("logout"); } catch (e) {}
-  DB = { Students: [], Batches: [], Attendance: [], Fees: [], Results: [] }; ME = {}; showLogin();
+  DB = { Students: [], Batches: [], Attendance: [], Fees: [], Exams: [], Results: [] }; ME = {}; showLogin();
 }
 
 /* ============ SHELL ============ */
@@ -290,7 +291,9 @@ function applyMe() {
    <button class="btn" onclick="go('profile')">My profile</button><button class="btn" onclick="logout()">Sign out</button>`;
 }
 function go(r) {
-  if (route === "attendance" && r !== "attendance" && AT.dirty.size && !confirm("You have unsaved attendance changes. Leave without saving?")) return; route = r; history.replaceState(null, "", "#" + r); $("#app").classList.remove("mob"); closePops(); render(); }
+  if (route === "attendance" && r !== "attendance" && AT.dirty.size && !confirm("You have unsaved attendance changes. Leave without saving?")) return;
+  if (route === "results" && r !== "results" && !rsGuard()) return;
+  route = r; history.replaceState(null, "", "#" + r); $("#app").classList.remove("mob"); closePops(); render(); }
 function toggleSb() {
   const a = $("#app");
   if (innerWidth <= 820) a.classList.toggle("mob");
@@ -307,7 +310,7 @@ function render() {
   if (route === "admin" && ME.role !== "master") route = "dash";
   document.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === route));
   $("#title").textContent = VIEWS[route];
-  ({ dash: vDash, students: vStudents, attendance: vAttendance, fees: vFees, profile: vProfile, admin: vAdmin }[route] || vSoon)();
+  ({ dash: vDash, students: vStudents, attendance: vAttendance, fees: vFees, results: vResults, profile: vProfile, admin: vAdmin }[route] || vSoon)();
   feeBadge();
 }
 
@@ -1340,6 +1343,418 @@ function vSoon() {
   }[route];
   $("#view").innerHTML =
     `<div class="glass pad empty"><h3 style="font-size:16px;color:var(--tx)">${VIEWS[route]} comes in the next step</h3><p>${t[0]}.</p><p>${t[1]}.</p></div>`;
+}
+
+/* ============ RESULTS ============
+   Exam  = one row in Exams (subject, chapters, date, batch, and which of the 4 parts it has + full marks of each)
+   Result = one row per student per exam (raw marks of each part). Totals / % / grade / GPA are always
+   recalculated from the exam setup, so changing an exam's setup instantly re-grades every student. */
+const GRADES = [[80, "A+", 5], [70, "A", 4], [60, "A-", 3.5], [50, "B", 3], [40, "C", 2], [33, "D", 1], [0, "F", 0]];
+const GRANGE = ["80 – 100", "70 – 79", "60 – 69", "50 – 59", "40 – 49", "33 – 39", "0 – 32"];
+const PARTS = [["w", "Written", "wf"], ["m", "MCQ", "mf"], ["p", "Practical", "pf"], ["v", "Viva-Voce", "vf"]];
+const SUBJECTS = ["Bangla", "English", "Mathematics", "General Math", "Higher Math", "Physics", "Chemistry", "Biology", "ICT", "Science", "Social Science", "Religion", "Accounting", "Finance", "Economics"];
+const EXAM_NAMES = ["Class Test", "Weekly Test", "Monthly Test", "Model Test", "Mid Term", "Half-Yearly", "Pre-Test", "Final Exam"];
+const LH_CHUNK = 45000, LH_MAX = LH_CHUNK * 4; // a sheet cell holds 50,000 characters, so the letterhead is stored in 4 pieces
+const RS = { tab: "exams", exam: "", q: "", batch: "", subj: "", vals: {}, dirty: new Set(), stu: "", sBatch: "", sSubj: "", from: "", to: "" };
+let RIX = {};
+
+const gradeOf = (pct) => { const g = GRADES.find((x) => pct >= x[0]) || GRADES[6]; return { grade: g[1], gpa: g[2] }; };
+const gcls = (g) => "gr-" + String(g).replace("+", "p").replace("-", "m");
+const nf = (n) => String(+Number(n).toFixed(2));
+const g2 = (n) => Number(n).toFixed(2);
+const fmtD = (s) => (/^\d{4}-\d{2}-\d{2}$/.test(s || "") ? dateObj(s).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : esc(s || ""));
+const examParts = (e) => PARTS.filter(([, , f]) => Number(e[f]) > 0).map(([k, l, f]) => ({ k, l, full: Number(e[f]) }));
+const examFull = (e) => sum(examParts(e), (p) => p.full);
+const partsTxt = (e) => examParts(e).map((p) => `${p.l} ${nf(p.full)}`).join(" + ");
+const rix = () => { RIX = {}; DB.Results.forEach((r) => ((RIX[r.examId] = RIX[r.examId] || {})[r.studentId] = r)); };
+const batchTxt = (e) => { const b = DB.Batches.find((x) => x.id === e.batchId); return b ? `${clsLabel(b.class)} · ${bLabel(b)}` : "Deleted batch"; };
+const isAbs = (r) => r && (r.absent === "1" || r.absent === 1 || r.absent === true);
+const gchip = (c) => c.grade ? `<span class="chip ${gcls(c.grade)}">${esc(c.grade)}</span>` : "";
+const stchip = (c) => {
+  const m = { Pass: ["s-Present", "Pass"], Fail: ["s-Absent", c.failed && c.failed.length ? "Fail (" + c.failed.join(", ") + ")" : "Fail"], Absent: ["s-Inactive", "Absent"], Incomplete: ["s-Partial", "Incomplete"], Invalid: ["s-Absent", "Check marks"], Pending: ["s-Inactive", "Not entered"] }[c.st];
+  return `<span class="chip ${m[0]}">${esc(m[1])}</span>`;
+};
+
+// ----- the marking engine: raw marks -> total, %, grade, GPA -----
+function calcRes(e, r) {
+  const P = examParts(e), full = examFull(e);
+  if (!r) return { st: "Pending", P, full };
+  if (isAbs(r)) return { st: "Absent", P, full };
+  const got = P.map((p) => { const v = r[p.k]; return v === "" || v == null || isNaN(Number(v)) ? null : Number(v); });
+  const filled = got.filter((x) => x !== null).length;
+  if (!filled) return { st: "Pending", P, full };
+  if (got.some((x, i) => x !== null && (x < 0 || x > P[i].full))) return { st: "Invalid", P, full };
+  if (filled < P.length) return { st: "Incomplete", P, full, got };
+  const total = sum(got, (x) => x), pct = full ? Math.round((total / full) * 10000) / 100 : 0;
+  let g = gradeOf(pct); const failed = [];
+  if (e.eachPass === "1" && P.length > 1) P.forEach((p, i) => { if (got[i] < p.full * 0.33) failed.push(p.l); });
+  if (failed.length) g = { grade: "F", gpa: 0 };
+  return { st: g.gpa > 0 ? "Pass" : "Fail", P, full, got, total, pct, grade: g.grade, gpa: g.gpa, failed };
+}
+function examRoster(e) {
+  const ids = new Set(DB.Students.filter((s) => s.batchId === e.batchId && s.status === "Active").map((s) => s.id));
+  Object.keys(RIX[e.id] || {}).forEach((id) => ids.add(id));
+  return [...ids].map((id) => DB.Students.find((s) => s.id === id)).filter(Boolean).sort((a, b) => String(a.sid).localeCompare(String(b.sid)));
+}
+// Calculates every student of an exam + merit positions + class statistics. getRow(studentId) gives the raw marks.
+function examTable(e, getRow) {
+  const L = examRoster(e).map((s) => ({ s, c: calcRes(e, getRow(s.id)), rank: 0 }));
+  const done = L.filter((x) => x.c.st === "Pass" || x.c.st === "Fail"), pass = done.filter((x) => x.c.st === "Pass");
+  [...pass].sort((a, b) => b.c.total - a.c.total).forEach((x, i, A) => (x.rank = i && x.c.total === A[i - 1].c.total ? A[i - 1].rank : i + 1));
+  const dist = {}; GRADES.forEach((g) => (dist[g[1]] = 0)); done.forEach((x) => dist[x.c.grade]++);
+  const st = {
+    all: L.length, appeared: done.length, passed: pass.length, failed: done.length - pass.length,
+    absent: L.filter((x) => x.c.st === "Absent").length, entered: L.filter((x) => x.c.st !== "Pending").length,
+    rate: done.length ? (pass.length / done.length) * 100 : null, avg: done.length ? sum(done, (x) => x.c.total) / done.length : null,
+    avgPct: done.length ? sum(done, (x) => x.c.pct) / done.length : null, hi: done.length ? Math.max(...done.map((x) => x.c.total)) : null,
+    lo: done.length ? Math.min(...done.map((x) => x.c.total)) : null, gpa: done.length ? sum(done, (x) => x.c.gpa) / done.length : null, dist,
+  };
+  return { L, st };
+}
+const subjList = () => [...new Set([...SUBJECTS, ...DB.Exams.map((e) => e.subject).filter(Boolean)])].sort((a, b) => a.localeCompare(b));
+const rsGuard = () => { if (!RS.dirty.size) return true; if (!confirm("You have unsaved marks. Discard them?")) return false; RS.dirty.clear(); return true; };
+window.addEventListener("beforeunload", (e) => { if (RS.dirty.size) { e.preventDefault(); e.returnValue = ""; } });
+
+/* ----- page shell ----- */
+function vResults() {
+  if (!DB.Batches.length) { $("#view").innerHTML = `<div class="glass pad empty">Create a class and batch first, then you can create exams and publish results.<br><br><button class="btn p" onclick="editBatch()">Add Class/Batch</button></div>`; return; }
+  rix();
+  if (RS.exam && !DB.Exams.some((e) => e.id === RS.exam)) RS.exam = "";
+  const t = RS.tab, sheet = t === "exams" && RS.exam;
+  $("#view").innerHTML = `<div class="glass tools">
+   <div class="tabs"><button class="${t === "exams" ? "on" : ""}" onclick="rsTab('exams')">Exams</button><button class="${t === "stu" ? "on" : ""}" onclick="rsTab('stu')">Student history</button></div>
+   <span style="flex:1"></span>
+   <button class="btn" onclick="lhModal()">${letterhead() ? "Letterhead ✓" : "Letterhead"}</button>
+   ${t === "exams" && !sheet ? `<button class="btn p" onclick="editExam()"><b>+</b> New exam</button>` : ""}
+  </div><div id="rs_body"></div>`;
+  sheet ? rsSheet() : t === "exams" ? rsExams() : rsHistory();
+}
+function rsTab(t) { if (!rsGuard()) return; RS.tab = t; RS.exam = ""; vResults(); }
+
+/* ----- exam list ----- */
+function rsExams() {
+  const q = RS.q.toLowerCase(), E = DB.Exams.map((e) => ({ e, T: examTable(e, (sid) => (RIX[e.id] || {})[sid]) }));
+  const done = E.flatMap(({ T }) => T.L.filter((x) => x.c.st === "Pass" || x.c.st === "Fail"));
+  const L = E.filter(({ e }) => (!RS.batch || e.batchId === RS.batch) && (!RS.subj || e.subject === RS.subj) && (!q || [e.name, e.subject, e.chapters].join(" ").toLowerCase().includes(q)))
+    .sort((a, b) => String(b.e.date).localeCompare(String(a.e.date)) || String(a.e.name).localeCompare(b.e.name));
+  $("#rs_body").innerHTML = `
+  <div class="grid stats">
+   <div class="glass stat"><small>Exams</small><b>${DB.Exams.length}</b></div>
+   <div class="glass stat"><small>Results entered</small><b>${done.length}</b></div>
+   <div class="glass stat"><small><i style="background:var(--ok)"></i>Pass rate</small><b>${done.length ? Math.round((done.filter((x) => x.c.st === "Pass").length / done.length) * 100) + "%" : "–"}</b></div>
+   <div class="glass stat"><small>Average GPA</small><b>${done.length ? g2(sum(done, (x) => x.c.gpa) / done.length) : "–"}</b></div>
+  </div>
+  <div class="glass tools" style="margin-top:12px">
+   <input class="in grow" id="rq" placeholder="Search exam, subject or chapter" value="${esc(RS.q)}">
+   <select class="in" id="rb"><option value="">All batches</option>${sortBatches(DB.Batches).map((b) => `<option value="${esc(b.id)}" ${RS.batch === b.id ? "selected" : ""}>${esc(clsLabel(b.class) + " · " + bLabel(b))}</option>`).join("")}</select>
+   <select class="in" id="rsu"><option value="">All subjects</option>${subjList().filter((s) => DB.Exams.some((e) => e.subject === s)).map((s) => `<option ${RS.subj === s ? "selected" : ""}>${esc(s)}</option>`).join("")}</select>
+  </div>
+  <div class="glass tw"><table><thead><tr><th>Date</th><th>Exam</th><th>Subject</th><th>Class / Batch</th><th>Parts</th><th>Full</th><th>Entered</th><th>Pass rate</th><th>Avg %</th><th></th></tr></thead><tbody>${
+    L.map(({ e, T }) => `<tr class="clk" onclick="rsOpen('${e.id}')" title="Open marks sheet"><td>${fmtD(e.date)}</td><td><b>${esc(e.name)}</b>${e.chapters ? `<small class="mut" style="display:block">${esc(e.chapters)}</small>` : ""}</td><td>${esc(e.subject)}</td><td>${esc(batchTxt(e))}</td>
+     <td>${examParts(e).map((p) => `<span class="chip s-Inactive">${p.l[0] === "V" ? "Viva" : p.l} ${nf(p.full)}</span>`).join(" ")}</td><td><b>${nf(examFull(e))}</b></td>
+     <td>${T.st.entered}/${T.st.all}</td><td>${T.st.rate === null ? "–" : Math.round(T.st.rate) + "%"}</td><td>${T.st.avgPct === null ? "–" : nf(T.st.avgPct) + "%"}</td>
+     <td style="text-align:right"><span class="ra">${icoBtn("", "Enter / view marks", `rsOpen('${e.id}')`, "list")}${icoBtn("", "Export PDF", `rsExamPdf('${e.id}')`, "print")}${icoBtn("", "Edit exam", `editExam('${e.id}')`, "edit")}${icoBtn("del", "Delete exam", `delExam('${e.id}')`, "trash")}</span></td></tr>`).join("") ||
+    `<tr><td colspan="10"><div class="empty">${DB.Exams.length ? "No exams match your filters." : "No exams yet. Use <b>New exam</b> to create one, then enter marks."}</div></td></tr>`}</tbody></table></div>`;
+  $("#rq").oninput = (e) => { RS.q = e.target.value; rsExams(); const i = $("#rq"); i.focus(); i.setSelectionRange(i.value.length, i.value.length); };
+  $("#rb").onchange = (e) => { RS.batch = e.target.value; rsExams(); };
+  $("#rsu").onchange = (e) => { RS.subj = e.target.value; rsExams(); };
+}
+
+/* ----- create / edit exam ----- */
+function editExam(id) {
+  const e = DB.Exams.find((x) => x.id === id), B = sortBatches(DB.Batches);
+  const defB = e ? e.batchId : RS.batch || (B.find((b) => b.id === F.batch) || {}).id || "";
+  const on = (k, f) => (e ? Number(e[f]) > 0 : k === "w");
+  $("#modal").innerHTML = `<h2>${e ? "Edit exam" : "New exam"}</h2>
+  <div class="f">
+   <label>Exam name<input class="in" id="x_name" list="x_names" placeholder="e.g. Monthly Test" value="${esc(e ? e.name : "")}"></label>
+   <label>Subject<input class="in" id="x_subj" list="x_subjs" placeholder="e.g. Physics" value="${esc(e ? e.subject : "")}"></label>
+   <datalist id="x_names">${[...new Set([...EXAM_NAMES, ...DB.Exams.map((x) => x.name)])].map((n) => `<option value="${esc(n)}">`).join("")}</datalist>
+   <datalist id="x_subjs">${subjList().map((n) => `<option value="${esc(n)}">`).join("")}</datalist>
+   <label class="full">Chapters covered<input class="in" id="x_chap" placeholder="e.g. Chapter 1-3, 5" value="${esc(e ? e.chapters : "")}"></label>
+   <label>Date<input class="in" id="x_date" type="date" value="${esc(e ? e.date : dKey(new Date()))}"></label>
+   <label>Class &amp; Batch<select class="in" id="x_batch"><option value="">Select class &amp; batch</option>${B.map((b) => `<option value="${esc(b.id)}" ${defB === b.id ? "selected" : ""}>${esc(clsLabel(b.class) + " · " + bLabel(b))}</option>`).join("")}</select></label>
+   <div class="full"><div class="lbl">Exam parts: use one, or combine several. Full marks of each part:</div>
+    <div class="parts">${PARTS.map(([k, l, f]) => `<div class="part"><label class="chkline"><input type="checkbox" id="x_${k}_on" ${on(k, f) ? "checked" : ""} onchange="xCalc()"> ${l}</label><input class="in" type="number" min="0" step="any" id="x_${k}" placeholder="Full marks" value="${e && Number(e[f]) > 0 ? esc(e[f]) : k === "w" && !e ? 100 : ""}" oninput="xCalc()"></div>`).join("")}</div></div>
+   <div class="full fsum" style="grid-template-columns:1fr 1fr"><div><small>Total full marks</small><b id="x_tot">0</b></div><div><small>Pass mark (33%)</small><b id="x_pass">0</b></div></div>
+   <label class="full chkline" id="x_eachw"><input type="checkbox" id="x_each" ${e && e.eachPass === "1" ? "checked" : ""}> Student must also pass every part (33% of that part). Failing any part gives grade F.</label>
+  </div>
+  <div class="acts"><button class="btn" onclick="closeM()">Cancel</button><button class="btn p" onclick="saveExam('${e ? e.id : ""}')">${e ? "Save changes" : "Create exam"}</button></div>`;
+  $("#modal").classList.add("wide");
+  xCalc();
+  $("#ov").classList.add("on");
+  setTimeout(() => $("#x_name").focus(), 50);
+}
+function xCalc() {
+  let n = 0, c = 0;
+  PARTS.forEach(([k]) => { const on = $("#x_" + k + "_on").checked, i = $("#x_" + k); i.disabled = !on; if (on) { c++; n += Number(i.value) || 0; } });
+  $("#x_tot").textContent = nf(n); $("#x_pass").textContent = nf(n * 0.33);
+  $("#x_eachw").style.display = c > 1 ? "" : "none";
+}
+async function saveExam(id) {
+  const g = (k) => $("#x_" + k).value.trim(), old = DB.Exams.find((x) => x.id === id);
+  if (!g("name")) { toast("Enter the exam name"); return; }
+  if (!g("subj")) { toast("Enter the subject"); return; }
+  if (!g("date")) { toast("Choose the exam date"); return; }
+  if (!g("batch")) { toast("Choose the class and batch"); return; }
+  const row = { id: id || uid(), name: g("name"), subject: g("subj"), chapters: g("chap"), date: g("date"), batchId: g("batch"), eachPass: "", created: old ? old.created : new Date().toISOString() };
+  let n = 0, c = 0;
+  for (const [k, , f] of PARTS) {
+    const on = $("#x_" + k + "_on").checked, v = Number(g(k));
+    if (on && !(v > 0)) { toast("Enter full marks for every selected part"); return; }
+    row[f] = on ? String(v) : ""; if (on) { n += v; c++; }
+  }
+  if (!c) { toast("Select at least one exam part"); return; }
+  row.full = String(n); row.eachPass = c > 1 && $("#x_each").checked ? "1" : "";
+  if (old) {
+    const lost = PARTS.filter(([, , f]) => Number(old[f]) > 0 && !(Number(row[f]) > 0)).map((p) => p[1]);
+    if (lost.length && DB.Results.some((r) => r.examId === id) && !confirm(`Removing ${lost.join(", ")} will ignore its saved marks. Continue?`)) return;
+    Object.assign(old, row);
+  } else DB.Exams.push(row);
+  closeM(); render();
+  await write("save", { table: "Exams", row }, old ? "Exam updated" : "Exam created");
+}
+function delExam(id) {
+  const e = DB.Exams.find((x) => x.id === id); if (!e) return;
+  const n = DB.Results.filter((r) => r.examId === id).length;
+  if (!confirm(`Delete "${e.name} - ${e.subject}"${n ? ` and its ${n} saved result${n > 1 ? "s" : ""}` : ""}? This cannot be undone.`)) return;
+  DB.Exams = DB.Exams.filter((x) => x.id !== id); DB.Results = DB.Results.filter((r) => r.examId !== id);
+  if (RS.exam === id) { RS.exam = ""; RS.dirty.clear(); }
+  render();
+  write("remove", { table: "Exams", id }, "").then((ok) => ok && write("removeWhere", { table: "Results", field: "examId", value: id }, "Exam deleted"));
+}
+
+/* ----- marks entry sheet for one exam ----- */
+function rsOpen(id) { RS.exam = id; RS.tab = "exams"; RS.dirty.clear(); rsLoad(); vResults(); }
+function rsLoad() {
+  const e = DB.Exams.find((x) => x.id === RS.exam); RS.vals = {};
+  examRoster(e).forEach((s) => { const r = (RIX[e.id] || {})[s.id] || {}; RS.vals[s.id] = { w: String(r.w ?? ""), m: String(r.m ?? ""), p: String(r.p ?? ""), v: String(r.v ?? ""), absent: isAbs(r) ? "1" : "" }; });
+}
+function rsSheet() {
+  const e = DB.Exams.find((x) => x.id === RS.exam), P = examParts(e);
+  if (!Object.keys(RS.vals).length) rsLoad();
+  const T = examTable(e, (sid) => RS.vals[sid]);
+  $("#rs_body").innerHTML = `
+  <div class="glass pad" style="margin-bottom:12px">
+   <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">
+    <div style="flex:1;min-width:220px"><h3 style="font-size:17px;margin-bottom:2px">${esc(e.name)} <span class="mut" style="font-weight:500">· ${esc(e.subject)}</span></h3>
+     <div class="mut" style="font-size:12.5px">${esc(batchTxt(e))} · ${fmtD(e.date)}${e.chapters ? " · " + esc(e.chapters) : ""}</div>
+     <div class="pills" style="margin-top:8px"><span class="chip s-Active">Full marks ${nf(examFull(e))}</span><span class="chip s-Inactive">${esc(partsTxt(e))}</span>${e.eachPass === "1" ? '<span class="chip s-Suspended">Pass each part</span>' : ""}</div></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="rsBack()">← Exams</button><button class="btn" onclick="editExam('${e.id}')">Edit exam</button><button class="btn" onclick="rsExamPdf('${e.id}')">Export PDF</button><button class="btn p" id="rs_save" onclick="rsSave()" disabled>Save marks</button></div>
+   </div></div>
+  <div class="rss" id="rs_stats"></div>
+  <div class="glass tw"><table style="min-width:${560 + P.length * 90}px"><thead><tr><th>Pos.</th><th>Student</th>${P.map((p) => `<th>${p.l}<small style="display:block;font-weight:500">out of ${nf(p.full)}</small></th>`).join("")}<th>Absent</th><th>Total<small style="display:block;font-weight:500">out of ${nf(examFull(e))}</small></th><th>%</th><th>Grade</th><th>GPA</th><th>Result</th></tr></thead><tbody>${
+    T.L.map(({ s }) => { const v = RS.vals[s.id];
+      return `<tr data-s="${s.id}"><td class="rk"></td><td><b>${esc(s.name)}</b><small class="mut" style="display:block">${esc(s.sid)}</small></td>${
+        P.map((p) => `<td><input class="in mk" type="number" step="any" min="0" max="${p.full}" inputmode="decimal" data-s="${s.id}" data-k="${p.k}" value="${esc(v[p.k])}" oninput="rsIn(this)" onkeydown="rsKey(event)"></td>`).join("")}
+       <td><input type="checkbox" class="ab" data-s="${s.id}" data-k="absent" ${v.absent ? "checked" : ""} onchange="rsIn(this)" style="accent-color:var(--bad);width:17px;height:17px"></td>
+       <td class="tt"></td><td class="pc"></td><td class="gd"></td><td class="gp"></td><td class="stt"></td></tr>`; }).join("") ||
+    `<tr><td colspan="${P.length + 7}"><div class="empty">No active students in this batch yet.</div></td></tr>`}</tbody></table></div>
+  <p class="mut" style="font-size:12px;margin:8px 2px">Type marks and press Enter to jump to the next student. Leave a student blank to enter later. Grading: 80+ A+ (5.00), 70 A (4.00), 60 A- (3.50), 50 B (3.00), 40 C (2.00), 33 D (1.00), below 33 F (0.00).</p>`;
+  rsPaint();
+}
+function rsPaint() {
+  const e = DB.Exams.find((x) => x.id === RS.exam); if (!e) return;
+  const T = examTable(e, (sid) => RS.vals[sid]), P = examParts(e);
+  T.L.forEach(({ s, c, rank }) => {
+    const tr = document.querySelector(`tr[data-s="${s.id}"]`); if (!tr) return;
+    const set = (cl, h) => { const el = tr.querySelector("." + cl); if (el) el.innerHTML = h; };
+    const has = c.st === "Pass" || c.st === "Fail";
+    set("rk", c.st === "Pass" ? rank : "–"); set("tt", has ? `<b>${nf(c.total)}</b>` : ""); set("pc", has ? nf(c.pct) : "");
+    set("gd", has ? gchip(c) : ""); set("gp", has ? g2(c.gpa) : ""); set("stt", stchip(c));
+    const ab = RS.vals[s.id].absent === "1";
+    tr.querySelectorAll("input.mk").forEach((i) => { i.disabled = ab; const p = P.find((x) => x.k === i.dataset.k), n = Number(i.value); i.classList.toggle("bad", i.value !== "" && (isNaN(n) || n < 0 || n > p.full)); });
+  });
+  const S = T.st, cell = (l, v, cl) => `<div><small>${l}</small><b class="${cl || ""}">${v}</b></div>`;
+  $("#rs_stats").innerHTML = [cell("Appeared", `${S.appeared}<small class="mut"> / ${S.all}</small>`), cell("Passed", S.passed, "g"), cell("Failed", S.failed, S.failed ? "r" : ""), cell("Absent", S.absent),
+    cell("Pass rate", S.rate === null ? "–" : Math.round(S.rate) + "%"), cell("Average", S.avg === null ? "–" : nf(S.avg)), cell("Highest", S.hi === null ? "–" : nf(S.hi)), cell("Avg GPA", S.gpa === null ? "–" : g2(S.gpa))].join("");
+  const sv = $("#rs_save"); if (sv) sv.disabled = !RS.dirty.size;
+}
+function rsIn(el) {
+  const v = RS.vals[el.dataset.s]; if (!v) return;
+  if (el.dataset.k === "absent") v.absent = el.checked ? "1" : ""; else v[el.dataset.k] = el.value.trim();
+  RS.dirty.add(el.dataset.s); rsPaint();
+}
+function rsKey(ev) {
+  if (ev.key !== "Enter") return;
+  ev.preventDefault();
+  const el = ev.target; let n = el.closest("tr").nextElementSibling;
+  while (n) { const i = n.querySelector(`input[data-k="${el.dataset.k}"]:not(:disabled)`); if (i) { i.focus(); i.select(); return; } n = n.nextElementSibling; }
+}
+function rsBack() { if (!rsGuard()) return; RS.exam = ""; vResults(); }
+async function rsSave() {
+  const e = DB.Exams.find((x) => x.id === RS.exam); if (!e || !RS.dirty.size) return;
+  const rows = [], gone = [];
+  for (const sid of RS.dirty) {
+    const v = RS.vals[sid], c = calcRes(e, v), id = e.id + "_" + sid;
+    if (c.st === "Invalid") { toast("Some marks are higher than the full marks of that part"); return; }
+    if (!v.absent && !PARTS.some(([k]) => v[k] !== "")) { if (DB.Results.some((r) => r.id === id)) gone.push(id); continue; }
+    const ab = v.absent === "1", keep = (k) => (ab ? "" : v[k]);
+    rows.push({ id, examId: e.id, studentId: sid, w: keep("w"), m: keep("m"), p: keep("p"), v: keep("v"), absent: ab ? "1" : "",
+      total: c.total === undefined ? "" : String(c.total), pct: c.pct === undefined ? "" : String(c.pct), grade: ab ? "AB" : c.grade || "", gpa: c.gpa === undefined ? "" : String(c.gpa) });
+  }
+  DB.Results = DB.Results.filter((r) => !rows.some((x) => x.id === r.id) && !gone.includes(r.id)).concat(rows);
+  RS.dirty.clear(); rix(); rsPaint();
+  let ok = true;
+  for (let i = 0; ok && i < rows.length; i += 200) ok = await write("saveMany", { table: "Results", rows: rows.slice(i, i + 200), upsert: true }, "");
+  for (const id of gone) { if (!ok) break; ok = await write("remove", { table: "Results", id }, ""); }
+  if (ok) toast("Marks saved");
+}
+
+/* ----- student history: every exam, current and previous ----- */
+function histData() {
+  const E = {}; DB.Exams.forEach((e) => (E[e.id] = e));
+  const L = [];
+  DB.Results.forEach((r) => {
+    const e = E[r.examId]; if (r.studentId !== RS.stu || !e) return;
+    if ((RS.sSubj && e.subject !== RS.sSubj) || (RS.from && e.date < RS.from) || (RS.to && e.date > RS.to)) return;
+    L.push({ e, c: calcRes(e, r) });
+  });
+  L.sort((a, b) => String(b.e.date).localeCompare(String(a.e.date)) || String(a.e.name).localeCompare(b.e.name));
+  const done = L.filter((x) => x.c.st === "Pass" || x.c.st === "Fail"), by = {};
+  done.forEach((x) => (by[x.e.subject] = by[x.e.subject] || []).push(x));
+  const subs = Object.entries(by).map(([sub, A]) => ({ sub, n: A.length, avg: sum(A, (x) => x.c.pct) / A.length, gpa: sum(A, (x) => x.c.gpa) / A.length })).sort((a, b) => a.sub.localeCompare(b.sub));
+  return { L, done, subs, cgpa: done.length ? sum(done, (x) => x.c.gpa) / done.length : null, avg: done.length ? sum(done, (x) => x.c.pct) / done.length : null,
+    pass: done.filter((x) => x.c.st === "Pass").length, absent: L.filter((x) => x.c.st === "Absent").length };
+}
+function rsHistory() {
+  const S = DB.Students.filter((s) => !RS.sBatch || s.batchId === RS.sBatch).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  if (RS.stu && !DB.Students.some((s) => s.id === RS.stu)) RS.stu = "";
+  $("#rs_body").innerHTML = `<div class="glass tools">
+   <select class="in" id="hb"><option value="">All batches</option>${sortBatches(DB.Batches).map((b) => `<option value="${esc(b.id)}" ${RS.sBatch === b.id ? "selected" : ""}>${esc(clsLabel(b.class) + " · " + bLabel(b))}</option>`).join("")}</select>
+   <select class="in grow" id="hs"><option value="">Select a student</option>${S.map((s) => `<option value="${esc(s.id)}" ${RS.stu === s.id ? "selected" : ""}>${esc(s.name)} (${esc(s.sid)})</option>`).join("")}</select>
+   <select class="in" id="hj"><option value="">All subjects</option>${subjList().map((s) => `<option ${RS.sSubj === s ? "selected" : ""}>${esc(s)}</option>`).join("")}</select>
+   <input class="in" type="date" id="hf" value="${esc(RS.from)}" title="From date"><input class="in" type="date" id="ht" value="${esc(RS.to)}" title="To date">
+   <button class="btn" onclick="RS.from=RS.to=RS.sSubj='';rsHistory()">Clear</button>
+   <button class="btn p" id="hpdf" onclick="rsStuPdf()">Export PDF</button></div><div id="rh_body"></div>`;
+  $("#hb").onchange = (e) => { RS.sBatch = e.target.value; if (RS.stu && RS.sBatch && !S.some((s) => s.id === RS.stu)) RS.stu = ""; rsHistory(); };
+  $("#hs").onchange = (e) => { RS.stu = e.target.value; rsHistBody(); };
+  $("#hj").onchange = (e) => { RS.sSubj = e.target.value; rsHistBody(); };
+  $("#hf").onchange = (e) => { RS.from = e.target.value; rsHistBody(); };
+  $("#ht").onchange = (e) => { RS.to = e.target.value; rsHistBody(); };
+  rsHistBody();
+}
+function rsHistBody() {
+  $("#hpdf").disabled = !RS.stu;
+  if (!RS.stu) { $("#rh_body").innerHTML = `<div class="glass empty pad">Choose a student to see the results of all their current and previous exams.</div>`; return; }
+  rix();
+  const s = DB.Students.find((x) => x.id === RS.stu), H = histData(), cell = (l, v, cl) => `<div><small>${l}</small><b class="${cl || ""}">${v}</b></div>`;
+  $("#rh_body").innerHTML = `
+  <div class="rss">${cell("Exams taken", H.done.length)}${cell("Passed", H.pass, "g")}${cell("Failed", H.done.length - H.pass, H.done.length - H.pass ? "r" : "")}${cell("Absent", H.absent)}${cell("Average %", H.avg === null ? "–" : nf(H.avg))}${cell("CGPA", H.cgpa === null ? "–" : g2(H.cgpa))}</div>
+  <div class="glass tw"><table><thead><tr><th>Date</th><th>Exam</th><th>Subject</th><th>Marks</th><th>Total</th><th>%</th><th>Grade</th><th>GPA</th><th>Result</th></tr></thead><tbody>${
+    H.L.map(({ e, c }) => { const has = c.st === "Pass" || c.st === "Fail", r = (RIX[e.id] || {})[s.id] || {};
+      return `<tr><td>${fmtD(e.date)}</td><td><b>${esc(e.name)}</b>${e.chapters ? `<small class="mut" style="display:block">${esc(e.chapters)}</small>` : ""}</td><td>${esc(e.subject)}</td>
+       <td>${c.P.map((p) => `<small class="mut">${p.l[0] === "V" ? "Viva" : p.l}</small> ${isAbs(r) || r[p.k] === "" ? "–" : nf(r[p.k])}`).join(" &nbsp; ")}</td>
+       <td>${has ? `<b>${nf(c.total)}</b><small class="mut"> / ${nf(c.full)}</small>` : ""}</td><td>${has ? nf(c.pct) : ""}</td><td>${has ? gchip(c) : ""}</td><td>${has ? g2(c.gpa) : ""}</td><td>${stchip(c)}</td></tr>`; }).join("") ||
+    `<tr><td colspan="9"><div class="empty">No results found for ${esc(s.name)} with these filters.</div></td></tr>`}</tbody></table></div>
+  ${H.subs.length ? `<div class="sec">Subject-wise summary</div><div class="glass tw"><table style="min-width:420px"><thead><tr><th>Subject</th><th>Exams</th><th>Average %</th><th>GPA</th></tr></thead><tbody>${H.subs.map((x) => `<tr><td><b>${esc(x.sub)}</b></td><td>${x.n}</td><td>${nf(x.avg)}</td><td>${g2(x.gpa)}</td></tr>`).join("")}</tbody></table></div>` : ""}
+  <p class="mut" style="font-size:12px;margin:8px 2px">CGPA = average of the GPA of all exams shown (absent and not-entered exams are left out).</p>`;
+}
+
+/* ----- letterhead (8 in x 2 in, A4 portrait) ----- */
+const letterhead = () => { const d = [ME.lh1, ME.lh2, ME.lh3, ME.lh4].map((x) => x || "").join(""); return d.startsWith("data:image") ? d : ""; };
+function lhModal() {
+  const cur = letterhead();
+  $("#modal").innerHTML = `<h2>Letterhead</h2>
+  <p class="mut" style="font-size:12.5px;margin-bottom:10px">Printed at the top of page 1 of every result PDF (A4, portrait). Upload an image of <b style="color:var(--tx)">8 in × 2 in</b> (4:1), for example 2400 × 600 px. Other shapes are fitted on white. Without one, your name, logo and address are used.</p>
+  <div class="lhprev">${cur ? `<img src="${cur}" alt="Letterhead">` : "No letterhead uploaded yet"}</div>
+  <input type="file" id="lhFile" accept="image/*" hidden>
+  <div class="acts" style="justify-content:space-between">${cur ? `<button class="btn d" onclick="lhClear()">Remove</button>` : "<span></span>"}<span style="display:flex;gap:8px"><button class="btn" onclick="closeM()">Close</button><button class="btn p" onclick="$('#lhFile').click()">${cur ? "Replace letterhead" : "Upload letterhead"}</button></span></div>`;
+  $("#lhFile").onchange = lhPick;
+  $("#ov").classList.add("on");
+}
+function lhPick(e) {
+  const f = e.target.files[0]; if (!f) return;
+  const im = new Image();
+  im.onerror = () => toast("Could not read that image");
+  im.onload = () => {
+    const off = Math.abs(im.width / im.height - 4) > 0.2; let out = "";
+    for (const w of [1600, 1200, 1000, 800, 640]) {
+      const h = w / 4, c = document.createElement("canvas"); c.width = w; c.height = h;
+      const x = c.getContext("2d"); x.fillStyle = "#fff"; x.fillRect(0, 0, w, h);
+      const k = Math.min(w / im.width, h / im.height), dw = im.width * k, dh = im.height * k; x.drawImage(im, (w - dw) / 2, (h - dh) / 2, dw, dh);
+      for (const q of [0.92, 0.82, 0.72, 0.62, 0.52]) { const d = c.toDataURL("image/jpeg", q); if (d.length <= LH_MAX) { out = d; break; } }
+      if (out) break;
+    }
+    if (!out) { toast("That image is too detailed to store. Try a simpler or smaller file."); return; }
+    const fields = {}; [1, 2, 3, 4].forEach((n) => (fields["lh" + n] = out.slice((n - 1) * LH_CHUNK, n * LH_CHUNK)));
+    saveFields(fields, off ? "Letterhead saved (fitted to 8×2 in)" : "Letterhead saved").then(() => { lhModal(); if (route === "results") vResults(); });
+  };
+  im.src = URL.createObjectURL(f); e.target.value = "";
+}
+function lhClear() { saveFields({ lh1: "", lh2: "", lh3: "", lh4: "" }, "Letterhead removed").then(() => { lhModal(); if (route === "results") vResults(); }); }
+
+/* ----- PDF export (A4 portrait; opens a print-ready page, choose "Save as PDF") ----- */
+function pdfOpen(title, inner) {
+  const w = window.open("", "_blank"); if (!w) { toast("Allow pop-ups to export the PDF"); return; }
+  const lh = letterhead();
+  const head = lh ? `<div class="lh"><img src="${lh}" alt=""></div>`
+    : `<div class="lhd">${ME.logo ? `<img src="${esc(ME.logo)}" alt="">` : ""}<div><h1>${esc(ME.name || "TuitionPro")}</h1><div class="m">${esc([ME.address, ME.phone, ME.email].filter(Boolean).join(" | "))}</div></div></div>`;
+  w.document.open();
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>
+  @page{size:A4 portrait;margin:0}*{box-sizing:border-box}html,body{margin:0}
+  body{font:12px/1.45 "Plus Jakarta Sans","Noto Sans Bengali",system-ui,sans-serif;color:#17324d;background:#e9eef4;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .bar{position:sticky;top:0;z-index:5;background:#17324d;color:#fff;padding:8px 14px;display:flex;gap:12px;align-items:center;font-size:13px}.bar button{background:#2f7de1;color:#fff;border:0;border-radius:8px;padding:7px 14px;font-weight:600;cursor:pointer}
+  .sheet{width:210mm;min-height:297mm;margin:12px auto;background:#fff;box-shadow:0 4px 24px #0003}
+  .lh{padding-top:4mm}.lh img{display:block;width:8in;height:2in;margin:0 auto}
+  .lhd{display:flex;align-items:center;gap:14px;padding:10mm 12mm 3mm;border-bottom:2px solid #17324d;margin:0 12mm}.lhd img{width:60px;height:60px;border-radius:10px;object-fit:cover}.lhd h1{font-size:22px;margin:0}.m{color:#64809b;font-size:11px}
+  table.o{width:100%;border-collapse:collapse}.o>thead>tr>td{height:6mm;padding:0;border:0}.o>tfoot>tr>td{height:16mm;padding:0;border:0}.o>tbody>tr>td{padding:0 12mm;border:0}
+  h2.ti{text-align:center;font-size:16px;letter-spacing:.14em;margin:6px 0 10px;text-transform:uppercase}
+  .info{display:grid;grid-template-columns:1fr 1fr;gap:3px 18px;margin-bottom:10px;font-size:12px}.info div b{display:inline-block;min-width:70px;color:#64809b;font-weight:600}
+  table.t{width:100%;border-collapse:collapse;font-size:11px;margin:6px 0 10px}.t th{background:#17324d;color:#fff;padding:5px 6px;text-align:center;font-weight:600}.t td{border:1px solid #cdd9e5;padding:4px 6px;text-align:center}.t td.l,.t th.l{text-align:left}
+  .t tr{page-break-inside:avoid}.t thead{display:table-header-group}.t tbody tr:nth-child(even) td{background:#f4f8fc}
+  .sum{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:6px 0 10px}.sum div{border:1px solid #cdd9e5;border-radius:6px;padding:5px 8px;background:#f4f8fc;break-inside:avoid}.sum small{display:block;color:#64809b;font-size:10px}.sum b{font-size:14px}
+  .scale{font-size:10px;color:#475b70;margin-top:4px}.scale table{border-collapse:collapse;width:100%}.scale td,.scale th{border:1px solid #cdd9e5;padding:2px 5px;text-align:center;font-size:10px}.scale th{background:#eaf1f8}
+  .sig{display:flex;justify-content:space-between;margin-top:34px;color:#64809b;font-size:11px;break-inside:avoid}.sig span{border-top:1px solid #9bb0c5;padding-top:4px;min-width:150px;text-align:center}
+  .F{color:#dc2626;font-weight:700}.ft{position:fixed;left:0;right:0;bottom:6mm;text-align:center;font-size:10px;color:#64809b}
+  @media screen{.ft{position:static;padding:10px 0 14px}}
+  @media print{body{background:#fff}.bar{display:none}.sheet{margin:0;box-shadow:none;width:auto;min-height:0}}
+  </style></head><body><div class="bar"><span>Choose <b>Save as PDF</b> as the destination in the print window.</span><button onclick="print()">Save as PDF / Print</button></div>
+  <div class="sheet">${head}<table class="o"><thead><tr><td></td></tr></thead><tfoot><tr><td></td></tr></tfoot><tbody><tr><td>${inner}</td></tr></tbody></table><div class="ft">Powered by TuitionPro</div></div>
+  <script>window.onload=function(){setTimeout(function(){window.print()},500)}<\/script></body></html>`);
+  w.document.close(); w.focus();
+}
+const scaleHtml = () => `<div class="scale"><table><tr><th>Marks (%)</th>${GRANGE.map((r) => `<td>${r}</td>`).join("")}</tr><tr><th>Grade</th>${GRADES.map((g) => `<td>${g[1]}</td>`).join("")}</tr><tr><th>GPA</th>${GRADES.map((g) => `<td>${g2(g[2])}</td>`).join("")}</tr></table></div>`;
+const sigHtml = () => `<div class="sig"><span>Class teacher</span><span>Authorised signature</span></div>`;
+const sumCell = (l, v) => `<div><small>${l}</small><b>${v}</b></div>`;
+
+function rsExamPdf(id) {
+  const e = DB.Exams.find((x) => x.id === id); if (!e) return;
+  if (RS.exam === id && RS.dirty.size) { toast("Save the marks first, then export"); return; }
+  rix();
+  const P = examParts(e), T = examTable(e, (sid) => (RIX[e.id] || {})[sid]), S = T.st;
+  const ord = { Pass: 0, Fail: 1, Incomplete: 2, Pending: 2, Invalid: 2, Absent: 3 };
+  const L = [...T.L].sort((a, b) => ord[a.c.st] - ord[b.c.st] || (b.c.total || 0) - (a.c.total || 0) || String(a.s.sid).localeCompare(String(b.s.sid)));
+  const row = ({ s, c, rank }) => { const r = (RIX[e.id] || {})[s.id] || {}, has = c.st === "Pass" || c.st === "Fail";
+    return `<tr><td>${c.st === "Pass" ? rank : "–"}</td><td>${esc(s.sid)}</td><td class="l">${esc(s.name)}</td>${P.map((p) => `<td>${isAbs(r) || r[p.k] === "" || r[p.k] == null ? "–" : nf(r[p.k])}</td>`).join("")}
+     <td><b>${has ? nf(c.total) : "–"}</b></td><td>${has ? nf(c.pct) : "–"}</td><td class="${c.grade === "F" ? "F" : ""}">${has ? esc(c.grade) : c.st === "Absent" ? "AB" : "–"}</td><td>${has ? g2(c.gpa) : "–"}</td>
+     <td class="${c.st === "Fail" ? "F" : ""}">${{ Pass: "Passed", Fail: "Failed", Absent: "Absent", Incomplete: "Incomplete", Pending: "–", Invalid: "–" }[c.st]}</td></tr>`; };
+  const dist = GRADES.map((g) => g[1]);
+  pdfOpen(`${e.name} - ${e.subject} - Result`, `
+  <h2 class="ti">Result Sheet</h2>
+  <div class="info"><div><b>Exam</b> ${esc(e.name)}</div><div><b>Date</b> ${fmtD(e.date)}</div><div><b>Subject</b> ${esc(e.subject)}</div><div><b>Class / Batch</b> ${esc(batchTxt(e))}</div>
+   ${e.chapters ? `<div style="grid-column:1/-1"><b>Chapters</b> ${esc(e.chapters)}</div>` : ""}<div><b>Full marks</b> ${nf(examFull(e))}</div><div><b>Parts</b> ${esc(partsTxt(e))}</div></div>
+  <table class="t"><thead><tr><th>Pos.</th><th>Student ID</th><th class="l">Name</th>${P.map((p) => `<th>${p.l}<br>(${nf(p.full)})</th>`).join("")}<th>Total<br>(${nf(examFull(e))})</th><th>%</th><th>Grade</th><th>GPA</th><th>Result</th></tr></thead><tbody>${L.map(row).join("") || `<tr><td colspan="${P.length + 8}">No students</td></tr>`}</tbody></table>
+  <div class="sum">${sumCell("Appeared", S.appeared + " / " + S.all)}${sumCell("Passed", S.passed)}${sumCell("Failed", S.failed)}${sumCell("Absent", S.absent)}${sumCell("Pass rate", S.rate === null ? "–" : Math.round(S.rate) + "%")}${sumCell("Average", S.avg === null ? "–" : nf(S.avg))}${sumCell("Highest", S.hi === null ? "–" : nf(S.hi))}${sumCell("Lowest", S.lo === null ? "–" : nf(S.lo))}${sumCell("Average GPA", S.gpa === null ? "–" : g2(S.gpa))}${sumCell("Grades", dist.filter((g) => S.dist[g]).map((g) => g + ":" + S.dist[g]).join(" ") || "–")}</div>
+  ${scaleHtml()}${sigHtml()}`);
+}
+function rsStuPdf() {
+  const s = DB.Students.find((x) => x.id === RS.stu); if (!s) { toast("Choose a student first"); return; }
+  rix();
+  const H = histData(), used = PARTS.filter(([k]) => H.L.some((x) => x.c.P.some((p) => p.k === k)));
+  const b = batchOf(s), cell = (x, k) => { const p = x.c.P.find((q) => q.k === k), r = (RIX[x.e.id] || {})[s.id] || {}; return p ? (isAbs(r) || r[k] === "" ? "–" : nf(r[k])) : "n/a"; };
+  pdfOpen(`${s.name} - Results`, `
+  <h2 class="ti">Academic Progress Report</h2>
+  <div class="info"><div><b>Name</b> ${esc(s.name)}</div><div><b>Student ID</b> ${esc(s.sid)}</div><div><b>Class</b> ${esc(clsLabel(stuClass(s)))}</div><div><b>Batch</b> ${b ? esc(bLabel(b)) : "–"}</div>
+   ${s.guardian ? `<div><b>Guardian</b> ${esc(s.guardian)}</div>` : ""}${RS.sSubj ? `<div><b>Subject</b> ${esc(RS.sSubj)}</div>` : ""}${RS.from || RS.to ? `<div><b>Period</b> ${RS.from ? fmtD(RS.from) : "start"} to ${RS.to ? fmtD(RS.to) : "today"}</div>` : ""}</div>
+  <div class="sum">${sumCell("Exams taken", H.done.length)}${sumCell("Passed", H.pass)}${sumCell("Failed", H.done.length - H.pass)}${sumCell("Average %", H.avg === null ? "–" : nf(H.avg))}${sumCell("CGPA", H.cgpa === null ? "–" : g2(H.cgpa))}</div>
+  <table class="t"><thead><tr><th>Date</th><th class="l">Exam</th><th class="l">Subject</th>${used.map(([, l]) => `<th>${l}</th>`).join("")}<th>Total</th><th>%</th><th>Grade</th><th>GPA</th></tr></thead><tbody>${
+    H.L.map((x) => { const has = x.c.st === "Pass" || x.c.st === "Fail";
+      return `<tr><td>${fmtD(x.e.date)}</td><td class="l">${esc(x.e.name)}${x.e.chapters ? `<br><span class="m">${esc(x.e.chapters)}</span>` : ""}</td><td class="l">${esc(x.e.subject)}</td>${used.map(([k]) => `<td>${cell(x, k)}</td>`).join("")}
+       <td>${has ? `<b>${nf(x.c.total)}</b> / ${nf(x.c.full)}` : x.c.st === "Absent" ? "Absent" : "–"}</td><td>${has ? nf(x.c.pct) : "–"}</td><td class="${x.c.grade === "F" ? "F" : ""}">${has ? esc(x.c.grade) : "–"}</td><td>${has ? g2(x.c.gpa) : "–"}</td></tr>`; }).join("") || `<tr><td colspan="${used.length + 7}">No exam results</td></tr>`}</tbody></table>
+  ${H.subs.length ? `<table class="t" style="width:70%"><thead><tr><th class="l">Subject</th><th>Exams</th><th>Average %</th><th>GPA</th></tr></thead><tbody>${H.subs.map((x) => `<tr><td class="l">${esc(x.sub)}</td><td>${x.n}</td><td>${nf(x.avg)}</td><td>${g2(x.gpa)}</td></tr>`).join("")}</tbody></table>` : ""}
+  <div class="m">CGPA is the average of the GPA of all exams listed above (absent exams are left out).</div>
+  ${scaleHtml()}${sigHtml()}`);
 }
 
 /* ============ WATERMARK (inline SVG so it can follow the theme colours) ============ */
