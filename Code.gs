@@ -21,16 +21,16 @@ const APP_URL = 'https://taufiqpias.github.io/TuitionPro'; // link used in email
 const ROOT_NAME = 'TuitionPro';               // top-level Drive folder
 
 const DATA = {
-  Students:   ['id','sid','name','class','section','batch','batchId','guardian','phone','fee','status','joined','updated','roll'],
+  Students:   ['id','sid','name','class','section','batch','batchId','guardian','phone','fee','status','joined','updated','roll','feeType','feeFrom'],
   Batches:    ['id','class','section','name','start','days'],
   Attendance: ['id','date','studentId','batchId','status'],
-  Fees:       ['id','studentId','month','amount','paid','date'],
+  Fees:       ['id','studentId','month','amount','paid','date','kind','method','note','rcpt','batchId'],
   Results:    ['id','studentId','exam','subject','marks','total']
 };
 const USERS = ['id','salt','hash','role','status','name','email','phone','address','speciality','trainers','services','logo','photo','token','exp','created','folderId','sheetId','note'];
 const PROFILE = ['name','email','phone','address','speciality','trainers','services','logo','photo'];
 const DAY = 864e5;
-const BUILD = '4'; // the app compares this to know whether you deployed the latest Code.gs
+const BUILD = '5'; // the app compares this to know whether you deployed the latest Code.gs
 
 /* ---------- small helpers ---------- */
 const P_ = () => PropertiesService.getScriptProperties();
@@ -68,6 +68,7 @@ function norm_(k, v, tz, shown) {
   if (!(v instanceof Date)) return v;
   if (k === 'start') return hhmm_(shown) || Utilities.formatDate(v, tz, 'HH:mm');
   if (k === 'joined' || k === 'date') return Utilities.formatDate(v, tz, 'yyyy-MM-dd');
+  if (k === 'month' || k === 'feeFrom') return Utilities.formatDate(v, tz, 'yyyy-MM');
   return v.toISOString();
 }
 // Always write as text so Sheets never reinterprets what we store.

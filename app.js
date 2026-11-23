@@ -1,7 +1,7 @@
 /* ============ CONFIG ============
    The Apps Script URL lives in config.js (so you never have to edit this file). */
 const API_URL = (window.TP_CONFIG && window.TP_CONFIG.API_URL) || "";
-const NEED_BUILD = "4"; // must match BUILD in Code.gs
+const NEED_BUILD = "5"; // must match BUILD in Code.gs
 const POLL_MS = 10000;
 const CLASSES = [
   "1",
@@ -47,6 +47,10 @@ const ICON = {
   trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3"/>',
   prev: '<path d="M15 6l-6 6 6 6"/>',
+  cash: '<rect x="3" y="6" width="18" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 9v.01M18 15v.01"/>',
+  list: '<path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/>',
+  skip: '<path d="M5 4l10 8-10 8z"/><path d="M19 5v14"/>',
+  print: '<path d="M6 9V3h12v6M6 18H4v-7h16v7h-2M7 14h10v7H7z"/>',
   next: '<path d="M9 6l6 6-6 6"/>',
 };
 const VIEWS = {
@@ -267,7 +271,7 @@ async function logout() {
 /* ============ SHELL ============ */
 function buildNav() {
   const keys = Object.keys(VIEWS).filter((k) => k !== "admin" || ME.role === "master");
-  $("#nav").innerHTML = keys.map((k) => `<a data-r="${k}" onclick="go('${k}')" title="${VIEWS[k]}">${svg(NAVICON[k])}<span>${VIEWS[k]}</span>${k === "admin" ? '<em class="nb" hidden></em>' : ""}</a>`).join("");
+  $("#nav").innerHTML = keys.map((k) => `<a data-r="${k}" onclick="go('${k}')" title="${VIEWS[k]}">${svg(NAVICON[k])}<span>${VIEWS[k]}</span>${k === "admin" || k === "fees" ? '<em class="nb" hidden></em>' : ""}</a>`).join("");
 }
 function setBell() { // notification bell + nav badge for pending sign-ups
   const master = ME.role === "master";
@@ -303,7 +307,8 @@ function render() {
   if (route === "admin" && ME.role !== "master") route = "dash";
   document.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === route));
   $("#title").textContent = VIEWS[route];
-  ({ dash: vDash, students: vStudents, attendance: vAttendance, profile: vProfile, admin: vAdmin }[route] || vSoon)();
+  ({ dash: vDash, students: vStudents, attendance: vAttendance, fees: vFees, profile: vProfile, admin: vAdmin }[route] || vSoon)();
+  feeBadge();
 }
 
 /* ============ CLASS / BATCH / STUDENT-ID HELPERS ============ */
@@ -352,12 +357,8 @@ function nextSid(batch, joined) {
 
 /* ============ DASHBOARD: stats + searchable class/batch rows ============ */
 const DF = { q: "", cls: "", sec: "", day: "" };
-// Payment pending = active students with a monthly fee and no paid Fees record for the current month
-function payPending() {
-  const m = new Date().toISOString().slice(0, 7);
-  const paid = new Set((DB.Fees || []).filter((f) => f.month === m && !["", "0", "false", "no"].includes(String(f.paid).toLowerCase())).map((f) => String(f.studentId)));
-  return DB.Students.filter((s) => s.status === "Active" && Number(s.fee) > 0 && !paid.has(String(s.id))).length;
-}
+// Payment pending = active students who currently owe something (see Tuition fees)
+const payPending = () => feeAll().filter((x) => x.I.pending > 0).length;
 function vDash() {
   const S = DB.Students;
   const un = S.filter((s) => !batchOf(s)).length;
@@ -366,7 +367,7 @@ function vDash() {
   <div class="grid stats">
    <div class="glass stat"><small>Total students</small><b>${S.length}</b></div>
    <div class="glass stat"><small><i style="background:var(--ok)"></i>Active</small><b>${S.filter((s) => s.status === "Active").length}</b></div>
-   <div class="glass stat"><small><i style="background:var(--warn)"></i>Payment pending</small><b>${payPending()}</b></div>
+   <div class="glass stat" style="cursor:pointer" onclick="openFeesDue()" title="View pending payments"><small><i style="background:var(--warn)"></i>Payment pending</small><b>${payPending()}</b></div>
    <div class="glass stat" style="cursor:pointer" onclick="openUnassigned()" title="View them in Students"><small><i style="background:var(--ac)"></i>Unassigned</small><b>${un}</b></div>
   </div>
   <div class="glass tools" style="margin-top:12px">
@@ -532,7 +533,7 @@ function rows() {
   $("#tb").innerHTML =
     L.map((s) => {
       const b = batchOf(s);
-      return `<tr><td><b>${esc(s.sid)}</b></td><td>${esc(s.name)}</td><td>${esc(clsLabel(stuClass(s)))}</td><td>${b ? esc(b.section) + " " + t12(b.start) + " " + daysTag(b) : "Unassigned"}</td><td>${esc(s.guardian)}</td><td>${esc(s.phone)}</td><td>${esc(s.fee)}</td><td><span class="chip s-${esc(s.status)}">${esc(s.status)}</span></td>
+      return `<tr><td><b>${esc(s.sid)}</b></td><td>${esc(s.name)}</td><td>${esc(clsLabel(stuClass(s)))}</td><td>${b ? esc(b.section) + " " + t12(b.start) + " " + daysTag(b) : "Unassigned"}</td><td>${esc(s.guardian)}</td><td>${esc(s.phone)}</td><td>${esc(s.fee)}<small class="mut"> ${s.feeType === "Course" ? "course" : "/month"}</small></td><td><span class="chip s-${esc(s.status)}">${esc(s.status)}</span></td>
    <td style="text-align:right"><span class="ra">${icoBtn("", "Edit student", `editStudent('${s.id}')`, "edit")}${icoBtn("del", "Delete student", `delStudent('${s.id}')`, "trash")}</span></td></tr>`;
     }).join("") ||
     `<tr><td colspan="9"><div class="empty">No students match. Clear the filters or use Add student.</div></td></tr>`;
@@ -550,7 +551,9 @@ function editStudent(id) {
    <label>Student ID (automatic)<input class="in" id="m_sid" readonly value="${v("sid")}" placeholder="Pick a batch"></label>
    <label>Joined<input class="in" id="m_joined" type="date" value="${s.joined || new Date().toISOString().slice(0, 10)}"></label>
    <label>Status<select class="in" id="m_status">${STATUSES.map((c) => `<option ${s.status === c ? "selected" : ""}>${c}</option>`).join("")}</select></label>
-   <label>Monthly/Course Fee<input class="in" id="m_fee" type="number" min="0" value="${v("fee")}"></label>
+   <label>Fee plan<select class="in" id="m_feeType" onchange="feePlanUI()"><option ${s.feeType !== "Course" ? "selected" : ""}>Monthly</option><option ${s.feeType === "Course" ? "selected" : ""}>Course</option></select></label>
+   <label><span id="m_feeLbl">Monthly Fee</span><input class="in" id="m_fee" type="number" min="0" value="${v("fee")}"></label>
+   <label id="m_ffw">Billing starts<input class="in" id="m_feeFrom" type="month" value="${esc(s.feeFrom || (s.joined || new Date().toISOString().slice(0, 10)).slice(0, 7))}"></label>
    <label>Guardian<input class="in" id="m_guardian" value="${v("guardian")}"></label>
    <label>Phone<input class="in" id="m_phone" inputmode="tel" value="${v("phone")}"></label>
   </div>
@@ -562,10 +565,12 @@ function editStudent(id) {
   };
   $("#m_batch").onchange = $("#m_joined").onchange = upd;
   upd();
+  feePlanUI();
   $("#ov").classList.add("on");
   setTimeout(() => $("#m_name").focus(), 50);
 }
 function closeM() {
+  $("#modal").classList.remove("wide");
   $("#ov").classList.remove("on");
 }
 $("#ov").addEventListener("mousedown", (e) => {
@@ -589,6 +594,8 @@ async function saveStudent(id) {
     guardian: g("guardian"),
     phone: g("phone"),
     fee: g("fee"),
+    feeType: g("feeType"),
+    feeFrom: g("feeFrom") || g("joined").slice(0, 7),
     status: g("status"),
     joined: g("joined"),
     updated: new Date().toISOString(),
@@ -937,6 +944,244 @@ async function atExport() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), "Attendance");
   XLSX.writeFile(wb, `attendance-${AT.month}-${bLabel(b).replace(/[^\w-]+/g, "_")}.xlsx`);
+}
+
+/* ============ TUITION FEES ============ */
+const CUR = "৳";
+const money = (n) => CUR + Math.round(Number(n) || 0).toLocaleString("en-US");
+const curMonth = () => dKey(new Date()).slice(0, 7);
+const monthLabel = (m) => { const [y, mo] = m.split("-").map(Number); return new Date(y, mo - 1, 1).toLocaleDateString(undefined, { month: "short", year: "numeric" }); };
+const monthsBetween = (a, b) => { const out = []; for (let m = a, i = 0; m <= b && i < 600; m = shiftMonth(m, 1), i++) out.push(m); return out; };
+const METHODS = ["Cash", "bKash", "Nagad", "Rocket", "Bank", "Other"];
+const FS = { q: "", batch: "", plan: "", st: "due", stu: "Active" };
+const sum = (L, f) => L.reduce((a, x) => a + (Number(f(x)) || 0), 0);
+
+function feePlanUI() { // student form: Monthly shows a billing-start month, Course does not
+  const course = $("#m_feeType").value === "Course";
+  $("#m_feeLbl").textContent = course ? "Course Fee (total)" : "Monthly Fee";
+  $("#m_ffw").style.display = course ? "none" : "";
+}
+
+// One student's fee position. Payments are records: kind "monthly" (month = YYYY-MM), "course", or "skip" (month waived).
+function feeInfo(s, recs) {
+  recs = recs || DB.Fees.filter((f) => f.studentId === s.id);
+  const fee = Number(s.fee) || 0, pays = recs.filter((r) => r.kind !== "skip"), paid = sum(pays, (r) => r.amount);
+  if (s.feeType === "Course") {
+    const pending = Math.max(0, fee - paid);
+    return { type: "Course", fee, due: fee, paid, pending, rows: [], clear: "", pct: fee ? Math.min(100, Math.round((paid / fee) * 100)) : 0, paidBy: {}, skipped: new Set(), start: "",
+      status: !fee ? "No fee" : pending === 0 ? "Cleared" : paid > 0 ? "Partial" : "Pending" };
+  }
+  const cur = curMonth();
+  const start = /^\d{4}-\d{2}$/.test(s.feeFrom) ? s.feeFrom : /^\d{4}-\d{2}/.test(s.joined || "") ? String(s.joined).slice(0, 7) : cur;
+  const skipped = new Set(recs.filter((r) => r.kind === "skip").map((r) => r.month));
+  const paidBy = {}; pays.forEach((r) => (paidBy[r.month] = (paidBy[r.month] || 0) + (Number(r.amount) || 0)));
+  const rows = []; let due = 0, pending = 0, clear = "", blocked = false;
+  monthsBetween(start, cur).forEach((m) => {
+    const d = skipped.has(m) ? 0 : fee, p = paidBy[m] || 0, pend = Math.max(0, d - p);
+    rows.push({ m, due: d, paid: p, pend, skip: skipped.has(m) });
+    due += d; pending += pend;
+    if (!blocked) { if (pend === 0) clear = m; else blocked = true; }
+  });
+  if (!blocked) for (let m = shiftMonth(cur, 1), i = 0; i < 24; i++, m = shiftMonth(m, 1)) { // advance payments extend "clear till"
+    if (skipped.has(m) || (fee && (paidBy[m] || 0) >= fee)) clear = m; else break;
+  }
+  return { type: "Monthly", fee, due, paid, pending, rows, clear, paidBy, skipped, start,
+    status: !fee ? "No fee" : pending === 0 ? "Cleared" : rows.some((r) => r.paid > 0 && r.pend > 0) ? "Partial" : "Pending" };
+}
+function feeAll(everyone) {
+  const by = {}; DB.Fees.forEach((f) => (by[f.studentId] = by[f.studentId] || []).push(f));
+  return DB.Students.filter((s) => everyone || s.status === "Active").map((s) => ({ s, I: feeInfo(s, by[s.id] || []) }));
+}
+function feeBadge() { // notification tag on the Tuition fees menu item
+  const n = DB.Students.length ? payPending() : 0, el = document.querySelector('.nav a[data-r="fees"] .nb');
+  if (el) { el.textContent = n; el.hidden = !n; el.title = n + " student" + (n === 1 ? "" : "s") + " with pending payments"; }
+}
+function openFeesDue() { Object.assign(FS, { q: "", batch: "", plan: "", st: "due", stu: "Active" }); go("fees"); }
+async function saveFeeRows(rows, msg) {
+  for (let i = 0; i < rows.length; i += 200) {
+    if (!(await write("saveMany", { table: "Fees", rows: rows.slice(i, i + 200) }, i + 200 >= rows.length ? msg : ""))) return false;
+  }
+  return true;
+}
+
+/* ----- overview ----- */
+function feeList() {
+  const q = FS.q.toLowerCase();
+  return feeAll(FS.stu === "all")
+    .filter(({ s, I }) => (!FS.batch || s.batchId === FS.batch) && (!FS.plan || I.type === FS.plan) &&
+      (!FS.st || (FS.st === "due" ? I.pending > 0 : I.status === FS.st)) && (!q || [s.name, s.sid, s.guardian, s.phone].join(" ").toLowerCase().includes(q)))
+    .sort((a, b) => b.I.pending - a.I.pending || String(a.s.name).localeCompare(String(b.s.name)));
+}
+function vFees() {
+  const act = feeAll(), pays = DB.Fees.filter((f) => f.kind !== "skip");
+  const colM = sum(pays.filter((f) => String(f.date).startsWith(curMonth())), (f) => f.amount);
+  const B = sortBatches(DB.Batches);
+  $("#view").innerHTML = `
+  <div class="grid stats">
+   <div class="glass stat"><small><i style="background:var(--ok)"></i>Collected this month</small><b>${money(colM)}</b></div>
+   <div class="glass stat"><small>Total collected</small><b>${money(sum(pays, (f) => f.amount))}</b></div>
+   <div class="glass stat"><small><i style="background:var(--warn)"></i>Total pending</small><b>${money(sum(act, (x) => x.I.pending))}</b></div>
+   <div class="glass stat"><small><i style="background:var(--bad)"></i>Students with dues</small><b>${act.filter((x) => x.I.pending > 0).length}</b></div>
+  </div>
+  <div class="glass tools" style="margin-top:12px">
+   <input class="in grow" id="fq2" placeholder="Search name, student ID, guardian, phone" value="${esc(FS.q)}">
+   <select class="in" id="fb2"><option value="">All batches</option>${B.map((b) => `<option value="${esc(b.id)}" ${FS.batch === b.id ? "selected" : ""}>${esc(bLabel(b))}</option>`).join("")}</select>
+   <select class="in" id="fp2"><option value="">All plans</option><option ${FS.plan === "Monthly" ? "selected" : ""}>Monthly</option><option ${FS.plan === "Course" ? "selected" : ""}>Course</option></select>
+   <select class="in" id="fs2">${[["due", "Has dues"], ["", "All"], ["Pending", "Pending"], ["Partial", "Partial"], ["Cleared", "Cleared"]].map(([v, l]) => `<option value="${v}" ${FS.st === v ? "selected" : ""}>${l}</option>`).join("")}</select>
+   <select class="in" id="fu2"><option value="Active" ${FS.stu === "Active" ? "selected" : ""}>Active students</option><option value="all" ${FS.stu === "all" ? "selected" : ""}>All students</option></select>
+   <button class="btn" onclick="feeExport()">Export Excel</button>
+  </div>
+  <div class="glass tw"><table><thead><tr><th>Student</th><th>Batch</th><th>Plan</th><th>Fee</th><th>Paid</th><th>Pending</th><th>Clear till</th><th>Status</th><th></th></tr></thead><tbody id="fbody"></tbody></table></div>`;
+  $("#fq2").oninput = (e) => { FS.q = e.target.value; feeRows(); };
+  [["fb2", "batch"], ["fp2", "plan"], ["fs2", "st"], ["fu2", "stu"]].forEach(([id, k]) => ($("#" + id).onchange = (e) => { FS[k] = e.target.value; feeRows(); }));
+  feeRows();
+}
+function feeRows() {
+  $("#fbody").innerHTML = feeList().map(({ s, I }) => {
+    const b = batchOf(s);
+    const clear = I.type === "Course" ? (I.status === "Cleared" ? "Fully paid" : I.pct + "% paid") : I.clear ? monthLabel(I.clear) : "None";
+    return `<tr><td><b>${esc(s.name)}</b><small class="mut" style="display:block">${esc(s.sid)}</small></td>
+     <td>${b ? esc(clsLabel(b.class)) + " " + esc(b.section.slice(0, 3)) + " " + t12(b.start) : "Unassigned"}</td>
+     <td><span class="chip s-${I.type}">${I.type}</span></td>
+     <td>${money(I.fee)}${I.type === "Monthly" ? '<small class="mut"> /mo</small>' : ""}</td>
+     <td class="g">${money(I.paid)}</td><td class="${I.pending ? "r" : ""}">${money(I.pending)}</td>
+     <td>${clear}${I.skipped.size ? `<small class="mut" style="display:block">${I.skipped.size} skipped</small>` : ""}</td>
+     <td><span class="chip s-${I.status.replace(" ", "")}">${I.status}</span></td>
+     <td style="text-align:right"><span class="ra">${icoBtn("pay", "Collect fee", `collectFee('${s.id}')`, "cash")}${icoBtn("", "Payment history", `feeHistory('${s.id}')`, "list")}${I.type === "Monthly" ? icoBtn("", "Skip a month", `skipFee('${s.id}')`, "skip") : ""}</span></td></tr>`;
+  }).join("") || `<tr><td colspan="9"><div class="empty">${DB.Students.length ? "Nothing matches. Change the filters." : "No students yet."}</div></td></tr>`;
+}
+async function feeExport() {
+  const L = feeList(); if (!L.length) { toast("Nothing to export"); return; }
+  if (!(await lib("xlsx"))) { toast("Excel library failed to load. Check your internet connection."); return; }
+  const rows = L.map(({ s, I }) => ({ "Student ID": s.sid, Name: s.name, Batch: batchOf(s) ? bLabel(batchOf(s)) : "", Plan: I.type, Fee: I.fee, Due: I.due, Paid: I.paid, Pending: I.pending, "Clear till": I.type === "Course" ? (I.status === "Cleared" ? "Fully paid" : I.pct + "% paid") : I.clear ? monthLabel(I.clear) : "", Status: I.status }));
+  const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), "Fees"); XLSX.writeFile(wb, "tuition-fees.xlsx");
+}
+
+/* ----- collect a payment (monthly instalment, course fee, or partial) ----- */
+function allocate(s, I, amount, only) {
+  if (I.type === "Course") return amount > I.pending ? { err: `That is more than the pending ${money(I.pending)}.` } : { list: [{ month: "course", amt: amount }] };
+  let left = amount; const out = [];
+  for (const m of only ? [only] : monthsBetween(I.start, shiftMonth(curMonth(), 24))) {
+    if (left <= 0) break;
+    if (I.skipped.has(m)) continue;
+    const room = I.fee - (I.paidBy[m] || 0);
+    if (room <= 0) continue;
+    const a = Math.min(room, left); out.push({ month: m, amt: a }); left -= a;
+  }
+  return left > 0 ? { err: only ? "That is more than this month still owes." : "That amount is too large." } : { list: out };
+}
+function nextReceipt(date) {
+  const pre = `${instInitials()}${String(date).slice(2, 4)}-R-`;
+  let n = 0; DB.Fees.forEach((f) => { if (String(f.rcpt).startsWith(pre)) n = Math.max(n, parseInt(String(f.rcpt).slice(pre.length), 10) || 0); });
+  return pre + String(n + 1).padStart(4, "0");
+}
+function collectFee(id, month) {
+  const s = DB.Students.find((x) => x.id === id), I = feeInfo(s);
+  if (!(I.fee > 0)) { toast("Set a fee for this student first (Edit student)."); return; }
+  const dues = I.rows.filter((r) => r.pend > 0), def = I.type === "Course" ? I.pending : dues.length ? dues[0].pend : I.fee;
+  $("#modal").innerHTML = `<h2>Collect fee</h2>
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap"><b>${esc(s.name)}</b><small class="mut">${esc(s.sid)}</small><span class="chip s-${I.type}">${I.type}</span></div>
+  <div class="fsum"><div><small>${I.type === "Course" ? "Course fee" : "Due so far"}</small><b>${money(I.due)}</b></div><div><small>Paid</small><b class="g">${money(I.paid)}</b></div><div><small>Pending</small><b class="${I.pending ? "r" : "g"}">${money(I.pending)}</b></div><div><small>${I.type === "Course" ? "Progress" : "Clear till"}</small><b>${I.type === "Course" ? I.pct + "%" : I.clear ? monthLabel(I.clear) : "None"}</b></div></div>
+  ${dues.length ? `<div class="pills" style="margin-bottom:12px">${dues.slice(0, 8).map((r) => `<span class="chip ${r.paid ? "s-Partial" : "s-Pending"}">${monthLabel(r.m)} ${money(r.pend)}</span>`).join("")}${dues.length > 8 ? `<span class="mut">+${dues.length - 8} more</span>` : ""}</div>` : ""}
+  <div class="f">
+   <label>Amount (${CUR})<input class="in" id="c_amt" type="number" min="1" value="${def}"></label>
+   <label>Payment date<input class="in" id="c_date" type="date" value="${dKey(new Date())}"></label>
+   ${I.type === "Monthly" ? `<label class="full">Apply to<select class="in" id="c_to"><option value="">Oldest dues first${dues.length ? "" : " (advance payment)"}</option>${dues.map((r) => `<option value="${r.m}" ${month === r.m ? "selected" : ""}>${monthLabel(r.m)} - pending ${money(r.pend)}</option>`).join("")}</select></label>` : ""}
+   <label>Method<select class="in" id="c_method">${METHODS.map((m) => `<option>${m}</option>`).join("")}</select></label>
+   <label>Note<input class="in" id="c_note" placeholder="Optional"></label>
+  </div>
+  <div class="acts" style="justify-content:space-between;flex-wrap:wrap">
+   <span style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">${I.pending > 0 ? `<button class="btn" onclick="$('#c_amt').value=${I.pending}">Full pending ${money(I.pending)}</button>` : ""}<label class="chkline"><input type="checkbox" id="c_print" checked> Print receipt</label></span>
+   <span style="display:flex;gap:8px"><button class="btn" onclick="closeM()">Cancel</button><button class="btn p" onclick="doCollect('${s.id}')">Record payment</button></span></div>
+  <p class="mut" style="font-size:12px;margin-top:8px">${I.type === "Monthly" ? "Partial payments are fine. Anything above the pending dues goes to the coming months." : "Partial payments are fine. The course is cleared when the total paid reaches the course fee."}</p>`;
+  $("#modal").classList.add("wide"); $("#ov").classList.add("on");
+  setTimeout(() => { $("#c_amt").focus(); $("#c_amt").select(); }, 50);
+}
+async function doCollect(id) {
+  const s = DB.Students.find((x) => x.id === id), I = feeInfo(s), amt = Number($("#c_amt").value), date = $("#c_date").value;
+  if (!(amt > 0)) { toast("Enter the amount received"); return; }
+  if (!date) { toast("Choose the payment date"); return; }
+  const A = allocate(s, I, amt, I.type === "Monthly" ? $("#c_to").value : "");
+  if (A.err) { toast(A.err); return; }
+  const rc = nextReceipt(date), method = $("#c_method").value, note = $("#c_note").value.trim();
+  const win = $("#c_print").checked ? window.open("", "_blank") : null; // opened now, inside the click, so pop-up blockers allow it
+  const rows = A.list.map((x) => ({ id: uid(), studentId: s.id, month: x.month, amount: String(x.amt), paid: "", date, kind: I.type === "Course" ? "course" : "monthly", method, note, rcpt: rc, batchId: s.batchId || "" }));
+  DB.Fees.push(...rows); closeM(); render();
+  const ok = await saveFeeRows(rows, "Payment recorded");
+  if (win) { ok ? printReceipt(rc, win) : win.close(); }
+}
+
+/* ----- history, undo, skip ----- */
+function feeHistory(id) {
+  const s = DB.Students.find((x) => x.id === id), I = feeInfo(s);
+  const L = DB.Fees.filter((f) => f.studentId === id).sort((a, b) => String(b.date).localeCompare(String(a.date)) || String(b.month).localeCompare(String(a.month)));
+  $("#modal").innerHTML = `<h2>Payment history</h2>
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap"><b>${esc(s.name)}</b><small class="mut">${esc(s.sid)}</small><span class="chip s-${I.type}">${I.type}</span><span class="chip s-${I.status.replace(" ", "")}">${I.status}</span></div>
+  <div class="fsum"><div><small>Fee</small><b>${money(I.fee)}</b></div><div><small>Paid</small><b class="g">${money(I.paid)}</b></div><div><small>Pending</small><b class="${I.pending ? "r" : "g"}">${money(I.pending)}</b></div><div><small>${I.type === "Course" ? "Progress" : "Clear till"}</small><b>${I.type === "Course" ? I.pct + "%" : I.clear ? monthLabel(I.clear) : "None"}</b></div></div>
+  <div class="tw" style="max-height:46vh;padding:0"><table style="min-width:520px"><thead><tr><th>Date</th><th>For</th><th>Amount</th><th>Method</th><th>Receipt</th><th></th></tr></thead><tbody>${
+    L.map((f) => f.kind === "skip"
+      ? `<tr><td>${esc(f.date)}</td><td>${monthLabel(f.month)} <span class="chip s-Inactive">skipped</span></td><td>-</td><td colspan="2" class="mut">${esc(f.note)}</td><td style="text-align:right"><span class="ra">${icoBtn("del", "Remove skip", `delFee('${f.id}','${id}')`, "trash")}</span></td></tr>`
+      : `<tr><td>${esc(f.date)}</td><td>${f.kind === "course" ? "Course fee" : monthLabel(f.month)}</td><td class="g">${money(f.amount)}</td><td>${esc(f.method)}</td><td>${esc(f.rcpt)}</td><td style="text-align:right"><span class="ra">${f.rcpt ? icoBtn("", "Print receipt", `printReceipt('${esc(f.rcpt)}')`, "print") : ""}${icoBtn("del", "Delete this payment", `delFee('${f.id}','${id}')`, "trash")}</span></td></tr>`).join("") ||
+    `<tr><td colspan="6"><div class="empty">No payments yet.</div></td></tr>`}</tbody></table></div>
+  <div class="acts"><button class="btn" onclick="closeM()">Close</button><button class="btn p" onclick="collectFee('${id}')">Collect fee</button></div>`;
+  $("#modal").classList.add("wide"); $("#ov").classList.add("on");
+}
+async function delFee(fid, sid) {
+  const f = DB.Fees.find((x) => x.id === fid); if (!f) return;
+  const what = f.kind === "skip" ? "this skip" : `this ${money(f.amount)} payment`;
+  if (!confirm(`Remove ${what}? The student's pending amount will change.`)) return;
+  DB.Fees = DB.Fees.filter((x) => x.id !== fid); render(); feeHistory(sid);
+  await write("remove", { table: "Fees", id: fid }, "Removed");
+}
+function skipFee(id) {
+  const s = DB.Students.find((x) => x.id === id), I = feeInfo(s), cur = curMonth();
+  if (I.type === "Course") { toast("Skipping applies to monthly fee plans."); return; }
+  const opts = monthsBetween(I.start < cur ? I.start : cur, shiftMonth(cur, 3)).filter((m) => !I.skipped.has(m) && !(I.paidBy[m] > 0));
+  if (!opts.length) { toast("No months available to skip"); return; }
+  const b = batchOf(s);
+  $("#modal").innerHTML = `<h2>Skip a month</h2>
+  <p class="mut" style="margin-bottom:10px"><b style="color:var(--tx)">${esc(s.name)}</b> will not be charged for the month you pick. Months that already have a payment can't be skipped.</p>
+  <div class="f">
+   <label class="full">Month<select class="in" id="k_m">${opts.map((m) => `<option value="${m}" ${m === (opts.includes(cur) ? cur : opts[opts.length - 1]) ? "selected" : ""}>${monthLabel(m)}</option>`).join("")}</select></label>
+   <label class="full">Reason<input class="in" id="k_note" placeholder="e.g. Eid holidays, scholarship, absent"></label>
+   ${b ? `<label class="full chkline"><input type="checkbox" id="k_all"> Apply to every active monthly student in ${esc(bLabel(b))}</label>` : ""}
+  </div>
+  <div class="acts"><button class="btn" onclick="closeM()">Cancel</button><button class="btn p" onclick="doSkip('${id}')">Skip month</button></div>`;
+  $("#ov").classList.add("on");
+}
+async function doSkip(id) {
+  const s = DB.Students.find((x) => x.id === id), m = $("#k_m").value, note = $("#k_note").value.trim(), date = dKey(new Date());
+  const who = $("#k_all") && $("#k_all").checked ? DB.Students.filter((x) => x.batchId === s.batchId && x.status === "Active" && x.feeType !== "Course") : [s];
+  const rows = who.filter((x) => { const I = feeInfo(x); return !I.skipped.has(m) && !(I.paidBy[m] > 0); })
+    .map((x) => ({ id: uid(), studentId: x.id, month: m, amount: "0", paid: "", date, kind: "skip", method: "", note, rcpt: "", batchId: x.batchId || "" }));
+  if (!rows.length) { toast("Nothing to skip for that month"); return; }
+  DB.Fees.push(...rows); closeM(); render();
+  await saveFeeRows(rows, `${monthLabel(m)} skipped for ${rows.length} student${rows.length > 1 ? "s" : ""}`);
+}
+
+/* ----- receipt ----- */
+function receiptHtml(rc) {
+  const R = DB.Fees.filter((f) => f.rcpt === rc); if (!R.length) return "";
+  const s = DB.Students.find((x) => x.id === R[0].studentId) || {}, b = batchOf(s), I = feeInfo(s), tot = sum(R, (r) => r.amount);
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Receipt ${esc(rc)}</title><style>
+   body{font:14px/1.5 system-ui,sans-serif;color:#17324d;margin:0;padding:28px}.box{max-width:560px;margin:auto;border:1px solid #c9d6e4;border-radius:12px;padding:24px}
+   .h{display:flex;align-items:center;gap:12px;border-bottom:2px solid #17324d;padding-bottom:12px;margin-bottom:14px}.h img{width:54px;height:54px;border-radius:10px;object-fit:cover}
+   h1{font-size:18px;margin:0}.m{color:#64809b;font-size:12px}table{width:100%;border-collapse:collapse;margin:12px 0}td,th{padding:7px 4px;border-bottom:1px solid #e3eaf2;text-align:left}th:last-child,td:last-child{text-align:right}
+   .t{font-size:16px;font-weight:700}.sig{display:flex;justify-content:space-between;margin-top:42px;color:#64809b;font-size:12px}.sig span{border-top:1px solid #9bb0c5;padding-top:4px;min-width:150px;text-align:center}
+   @media print{body{padding:0}.box{border:0}}</style></head><body><div class="box">
+   <div class="h">${ME.logo ? `<img src="${esc(ME.logo)}">` : ""}<div><h1>${esc(ME.name || "TuitionPro")}</h1><div class="m">${esc([ME.address, ME.phone].filter(Boolean).join(" | "))}</div></div><div style="margin-left:auto;text-align:right"><b>FEE RECEIPT</b><div class="m">${esc(rc)}<br>${esc(R[0].date)}</div></div></div>
+   <div><b>${esc(s.name)}</b> <span class="m">(${esc(s.sid)})</span><div class="m">${b ? esc(bLabel(b)) : ""}</div></div>
+   <table><thead><tr><th>For</th><th>Amount</th></tr></thead><tbody>${R.map((r) => `<tr><td>${r.kind === "course" ? "Course fee" : monthLabel(r.month) + " tuition fee"}</td><td>${money(r.amount)}</td></tr>`).join("")}
+   <tr><td class="t">Total received (${esc(R[0].method)})</td><td class="t">${money(tot)}</td></tr></tbody></table>
+   ${R[0].note ? `<div class="m">Note: ${esc(R[0].note)}</div>` : ""}
+   <div class="m">${I.pending > 0 ? `Balance pending: ${money(I.pending)}` : "No balance pending"}${I.type === "Monthly" && I.clear ? ` | Cleared till ${monthLabel(I.clear)}` : ""}</div>
+   <div class="sig"><span>Guardian</span><span>Received by</span></div></div></body></html>`;
+}
+function printReceipt(rc, win) {
+  win = win || window.open("", "_blank");
+  if (!win) { toast("Allow pop-ups to print receipts"); return; }
+  win.document.open(); win.document.write(receiptHtml(rc)); win.document.close(); win.focus();
+  setTimeout(() => win.print(), 350);
 }
 
 /* ============ PROFILE ============ */
