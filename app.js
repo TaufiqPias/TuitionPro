@@ -1,7 +1,7 @@
 /* ============ CONFIG ============
    The Apps Script URL lives in config.js (so you never have to edit this file). */
 const API_URL = (window.TP_CONFIG && window.TP_CONFIG.API_URL) || "";
-const NEED_BUILD = "7"; // must match BUILD in Code.gs
+const NEED_BUILD = "8"; // must match BUILD in Code.gs
 const POLL_MS = 10000;
 const CLASSES = [
   "1",
@@ -22,6 +22,45 @@ const CLASSES = [
   "Admission",
 ];
 const STATUSES = ["Active", "Inactive", "Suspended", "Left"];
+const SCHOOLS = [
+  "Bangladesh Police Academy, Rajshahi",
+  "Baya School and College, Rajshahi",
+  "Govt. Laboratory High School, Rajshahi",
+  "Haji Muhammad Muhsin Govt. High School, Rajshahi",
+  "Hamidpur Nawadapara Pilot High School, Rajshahi",
+  "Shaheed Buddhijibi Govt. College",
+  "Mission School, Rajshahi",
+  "Masjid Mission Academy",
+  "Nawadapara Girls High School",
+  "New Govt. Degree College",
+  "Nowahata Govt. Degree College",
+  "P.N. Govt. Girls' High School",
+  "Rajshahi Cadet College",
+  "Rajshahi Cantonment Board School and College",
+  "Rajshahi Cantonment Public School and College",
+  "Rajshahi College",
+  "Rajshahi Collegiate School and College",
+  "Rajshahi Court Model School and College",
+  "Rajshahi Education Board Govt. Model School and College",
+  "Rajshahi Govt. City College",
+  "Rajshahi Govt. Girls High School",
+  "Rajshahi Bahumukhi Girl's High School",
+  "Rajshahi Govt. Model School and College",
+  "Rajshahi Govt. Women's College",
+  "Rajshahi Loknath High School",
+  "Rajshahi Siroil Govt. High School",
+  "Rajshahi University School and College",
+  "Shah Mukhdam High School and College, Rajshahi",
+  "Shaheed A.H.M. Kamaruzzaman Govt. Degree College",
+  "Shaheed Colonel Kazi Emdadul Haque Public School",
+  "Shaheed Mamun Mahmud Police Lines School and College",
+  "Shahid Nazmul Haque Girls High School, Rajshahi",
+  "Summit School, Rajshahi",
+  "Sristy Central School, Rajshahi",
+  "Motihar College"
+];
+// Suggestions = the built-in list + any school/college already typed for another student
+const schoolList = () => [...new Set([...SCHOOLS, ...DB.Students.map((s) => String(s.school || "").trim()).filter(Boolean)])].sort((x, y) => x.localeCompare(y));
 const THEMES = {
   ocean: "#2f7de1",
   emerald: "#16a368",
@@ -505,14 +544,14 @@ function filtered() {
       (!F.cls || stuClass(s) === F.cls) &&
       (!F.st || s.status === F.st) &&
       (!F.batch || (F.batch === "-" ? !batchOf(s) : s.batchId === F.batch)) &&
-      (!q || [s.name, s.sid, s.guardian, s.phone].join(" ").toLowerCase().includes(q)),
+      (!q || [s.name, s.sid, s.school, s.guardian, s.phone].join(" ").toLowerCase().includes(q)),
   );
 }
 function vStudents() {
   const B = sortBatches(DB.Batches), hasUn = DB.Students.some((s) => !batchOf(s));
   $("#view").innerHTML = `
   <div class="glass tools">
-   <input class="in grow" id="fq" placeholder="Search name, student ID, guardian, phone" value="${esc(F.q)}">
+   <input class="in grow" id="fq" placeholder="Search name, student ID, school, guardian, phone" value="${esc(F.q)}">
    <select class="in" id="fc"><option value="">All classes</option>${CLASSES.map((c) => `<option ${F.cls === c ? "selected" : ""} value="${esc(c)}">${esc(clsLabel(c))}</option>`).join("")}</select>
    <select class="in" id="fb"><option value="">All batches</option>${B.map((b) => `<option ${F.batch === b.id ? "selected" : ""} value="${esc(b.id)}">${esc(bLabel(b))}</option>`).join("")}${hasUn ? `<option value="-" ${F.batch === "-" ? "selected" : ""}>Unassigned</option>` : ""}</select>
    <select class="in" id="fs"><option value="">All status</option>${STATUSES.map((c) => `<option ${F.st === c ? "selected" : ""}>${c}</option>`).join("")}</select>
@@ -536,7 +575,7 @@ function rows() {
   $("#tb").innerHTML =
     L.map((s) => {
       const b = batchOf(s);
-      return `<tr><td><b>${esc(s.sid)}</b></td><td>${esc(s.name)}</td><td>${esc(clsLabel(stuClass(s)))}</td><td>${b ? esc(b.section) + " " + t12(b.start) + " " + daysTag(b) : "Unassigned"}</td><td>${esc(s.guardian)}</td><td>${esc(s.phone)}</td><td>${esc(s.fee)}<small class="mut"> ${s.feeType === "Course" ? "course" : "/month"}</small></td><td><span class="chip s-${esc(s.status)}">${esc(s.status)}</span></td>
+      return `<tr><td><b>${esc(s.sid)}</b></td><td>${esc(s.name)}${s.school ? `<small class="mut" style="display:block">${esc(s.school)}</small>` : ""}</td><td>${esc(clsLabel(stuClass(s)))}</td><td>${b ? esc(b.section) + " " + t12(b.start) + " " + daysTag(b) : "Unassigned"}</td><td>${esc(s.guardian)}</td><td>${esc(s.phone)}</td><td>${esc(s.fee)}<small class="mut"> ${s.feeType === "Course" ? "course" : "/month"}</small></td><td><span class="chip s-${esc(s.status)}">${esc(s.status)}</span></td>
    <td style="text-align:right"><span class="ra">${icoBtn("", "Edit student", `editStudent('${s.id}')`, "edit")}${icoBtn("del", "Delete student", `delStudent('${s.id}')`, "trash")}</span></td></tr>`;
     }).join("") ||
     `<tr><td colspan="9"><div class="empty">No students match. Clear the filters or use Add student.</div></td></tr>`;
@@ -550,6 +589,7 @@ function editStudent(id) {
   $("#modal").innerHTML = `<h2>${id ? "Edit student" : "Add student"}</h2>
   <div class="f">
    <label class="full">Full name<input class="in" id="m_name" value="${v("name")}"></label>
+   <label class="full">School/College Name<input class="in" id="m_school" list="m_schools" autocomplete="off" placeholder="Type or pick from suggestions" value="${v("school")}"><datalist id="m_schools">${schoolList().map((x) => `<option value="${esc(x)}">`).join("")}</datalist></label>
    <label class="full">Assign Class &amp; Batch<select class="in" id="m_batch"><option value="">Select class &amp; batch</option>${B.map((b) => `<option value="${esc(b.id)}" ${cur === b.id ? "selected" : ""}>${esc(bLabel(b))}</option>`).join("")}</select></label>
    <label>Student ID (automatic)<input class="in" id="m_sid" readonly value="${v("sid")}" placeholder="Pick a batch"></label>
    <label>Joined<input class="in" id="m_joined" type="date" value="${s.joined || new Date().toISOString().slice(0, 10)}"></label>
@@ -557,6 +597,7 @@ function editStudent(id) {
    <label>Fee plan<select class="in" id="m_feeType" onchange="feePlanUI()"><option ${s.feeType !== "Course" ? "selected" : ""}>Monthly</option><option ${s.feeType === "Course" ? "selected" : ""}>Course</option></select></label>
    <label><span id="m_feeLbl">Monthly Fee</span><input class="in" id="m_fee" type="number" min="0" value="${v("fee")}"></label>
    <label id="m_ffw">Billing starts<input class="in" id="m_feeFrom" type="month" value="${esc(s.feeFrom || (s.joined || new Date().toISOString().slice(0, 10)).slice(0, 7))}"></label>
+   ${id ? "" : `<label>Paid amount (optional)<input class="in" id="m_paid" type="number" min="0" placeholder="0"></label>`}
    <label>Guardian<input class="in" id="m_guardian" value="${v("guardian")}"></label>
    <label>Phone<input class="in" id="m_phone" inputmode="tel" value="${v("phone")}"></label>
   </div>
@@ -590,6 +631,7 @@ async function saveStudent(id) {
     sid: old && old.sid ? old.sid : nextSid(b, g("joined")),
     roll: old ? old.roll || "" : "",
     name: g("name"),
+    school: g("school"),
     batchId: b.id,
     class: b.class,
     section: b.section,
@@ -603,11 +645,29 @@ async function saveStudent(id) {
     joined: g("joined"),
     updated: new Date().toISOString(),
   };
+  const paid = id ? 0 : Number(($("#m_paid") || {}).value) || 0;
+  let pr = null;
+  if (paid > 0) {
+    if (!(Number(row.fee) > 0)) { toast("Enter the fee before adding a paid amount"); return; }
+    pr = paidRows(row, paid, payDate(row.joined), "Initial payment");
+    if (pr.err) { toast(pr.err); return; }
+  }
   const i = DB.Students.findIndex((x) => x.id === row.id);
   i < 0 ? DB.Students.push(row) : (DB.Students[i] = row);
+  if (pr) DB.Fees.push(...pr.rows);
   closeM();
   render();
-  await write("save", { table: "Students", row }, "Student saved");
+  const ok = await write("save", { table: "Students", row }, "Student saved");
+  if (ok && pr) await saveFeeRows(pr.rows, "Student saved with payment");
+}
+// Payment date for an opening payment: the joining date, but never in the future
+const payDate = (joined) => { const t = dKey(new Date()); return joined && joined < t ? joined : t; };
+// Turns an opening "paid amount" into fee records (oldest month first for Monthly plans, one record for Course plans)
+function paidRows(s, amt, date, note) {
+  const I = feeInfo(s, []), A = allocate(s, I, amt, "");
+  if (A.err) return { err: A.err };
+  const rc = nextReceipt(date), course = I.type === "Course";
+  return { rows: A.list.map((x) => ({ id: uid(), studentId: s.id, month: x.month, amount: String(x.amt), paid: "", date, kind: course ? "course" : "monthly", method: "Cash", note, rcpt: rc, batchId: s.batchId || "" })) };
 }
 async function delStudent(id) {
   const s = DB.Students.find((x) => x.id === id);
@@ -622,12 +682,14 @@ async function exportXlsx() {
     return {
       "Student ID": s.sid,
       Name: s.name,
+      "School/College": s.school || "",
       Class: stuClass(s),
       Section: b ? b.section : "",
       Batch: b ? bLabel(b) : "",
       "Batch days": b ? dayCodes(b).join("/") : "",
       Guardian: s.guardian,
       Phone: s.phone,
+      "Fee plan": s.feeType === "Course" ? "Course" : "Monthly",
       "Monthly/Course Fee": s.fee,
       Status: s.status,
       Joined: s.joined,
@@ -646,6 +708,9 @@ let IMP = null;
 const nk = (s) => String(s ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const ALIAS = {
   name: ["name", "studentname", "fullname"],
+  school: ["schoolcollegename", "schoolname", "collegename", "school", "college", "institution"],
+  feeType: ["feeplan", "plan", "feetype"],
+  paid: ["paidamount", "paid", "amountpaid"],
   class: ["class"],
   batch: ["batch", "batchname"],
   guardian: ["guardian", "guardianname", "parent", "parentname"],
@@ -750,10 +815,17 @@ function impResolve() {
     } else { b = defB; if (!b) err = "No batch: pick one above or fill the Batch column"; }
     if (err) { errs.push({ line, name, err }); return; }
     const phone = fixPhone(r.phone), key = b.id + "|" + nk(name) + "|" + nk(phone);
+    const fee = String(r.fee ?? "").trim(), joined = parseDate(r.joined), feeType = /course/i.test(String(r.feeType ?? "")) ? "Course" : "Monthly";
+    const paid = Number(String(r.paid ?? "").replace(/[,\s]/g, "")) || 0;
+    if (paid > 0) {
+      const tmp = { fee, feeType, feeFrom: joined.slice(0, 7), joined };
+      const A = Number(fee) > 0 ? allocate(tmp, feeInfo(tmp, []), paid, "") : { err: "Paid amount needs a fee" };
+      if (A.err) { errs.push({ line, name, err: A.err }); return; }
+    }
     if (seen.has(key)) { dups++; return; }
     seen.add(key);
     const st = STATUSES.find((s) => nk(s) === nk(r.status)) || "Active";
-    ok.push({ name, b, guardian: String(r.guardian ?? "").trim(), phone, fee: String(r.fee ?? "").trim(), status: st, joined: parseDate(r.joined) });
+    ok.push({ name, b, school: String(r.school ?? "").trim(), guardian: String(r.guardian ?? "").trim(), phone, fee, feeType, paid, status: st, joined });
   });
   return { ok, errs, dups };
 }
@@ -772,20 +844,23 @@ function impPreview() {
 }
 async function doImport() {
   if (!IMP || !IMP.res || !IMP.res.ok.length) return;
+  const feeRows = [];
   const rows = IMP.res.ok.map((x) => {
-    const row = { id: uid(), sid: nextSid(x.b, x.joined), roll: "", name: x.name, batchId: x.b.id, class: x.b.class, section: x.b.section, batch: x.b.name, guardian: x.guardian, phone: x.phone, fee: x.fee, status: x.status, joined: x.joined, updated: new Date().toISOString() };
+    const row = { id: uid(), sid: nextSid(x.b, x.joined), roll: "", name: x.name, school: x.school, batchId: x.b.id, class: x.b.class, section: x.b.section, batch: x.b.name, guardian: x.guardian, phone: x.phone, fee: x.fee, feeType: x.feeType, feeFrom: x.joined.slice(0, 7), status: x.status, joined: x.joined, updated: new Date().toISOString() };
     DB.Students.push(row); // pushed one by one so the next Student ID keeps counting up
+    if (x.paid > 0) { const pr = paidRows(row, x.paid, payDate(x.joined), "Initial payment"); if (pr.rows) { DB.Fees.push(...pr.rows); feeRows.push(...pr.rows); } }
     return row;
   });
   closeM(); render();
   for (let i = 0; i < rows.length; i += 200) {
     const last = i + 200 >= rows.length;
-    if (!(await write("saveMany", { table: "Students", rows: rows.slice(i, i + 200) }, last ? `${rows.length} students imported` : ""))) return;
+    if (!(await write("saveMany", { table: "Students", rows: rows.slice(i, i + 200) }, last && !feeRows.length ? `${rows.length} students imported` : ""))) return;
   }
+  if (feeRows.length) await saveFeeRows(feeRows, `${rows.length} students imported with payments`);
 }
 async function downloadTemplate() {
   if (!(await lib("exceljs"))) { toast("Template library failed to load. Check your internet connection."); return; }
-  const B = sortBatches(DB.Batches), used = CLASSES.filter((c) => B.some((b) => b.class === c));
+  const B = sortBatches(DB.Batches), used = CLASSES.filter((c) => B.some((b) => b.class === c)), SL = schoolList();
   const defB = $("#i_batch") && DB.Batches.find((b) => b.id === $("#i_batch").value);
   const defC = defB ? defB.class : $("#i_class") ? $("#i_class").value : "";
   const wb = new ExcelJS.Workbook();
@@ -794,28 +869,38 @@ async function downloadTemplate() {
   const ls = wb.addWorksheet("Lists", { state: "hidden" });
   used.forEach((c, i) => (ls.getCell(i + 1, 1).value = c));
   B.forEach((b, i) => (ls.getCell(i + 1, 2).value = bLabel(b)));
-  [["Name", 28], ["Class", 14], ["Batch", 26], ["Guardian", 22], ["Phone", 16], ["Monthly/Course Fee", 20], ["Status", 12], ["Joined", 14]].forEach(([h, w], i) => {
+  SL.forEach((x, i) => (ls.getCell(i + 1, 3).value = x));
+  // column order: A Name, B School/College Name, C Class, D Batch, E Guardian, F Phone, G Fee plan, H Monthly/Course Fee, I Paid amount, J Status, K Joined
+  [["Name", 28], ["School/College Name", 38], ["Class", 14], ["Batch", 26], ["Guardian", 22], ["Phone", 16], ["Fee plan", 12], ["Monthly/Course Fee", 20], ["Paid amount", 14], ["Status", 12], ["Joined", 14]].forEach(([h, w], i) => {
     ws.getColumn(i + 1).width = w;
     const c = ws.getCell(1, i + 1); c.value = h; c.font = { bold: true };
     c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFDCE9FA" } };
   });
   const N = 200;
   for (let r = 2; r <= N + 1; r++) {
-    ws.getCell(r, 5).numFmt = "@"; ws.getCell(r, 8).numFmt = "yyyy-mm-dd";
-    if (defC) ws.getCell(r, 2).value = defC;
-    if (defB) ws.getCell(r, 3).value = bLabel(defB);
+    ws.getCell(r, 6).numFmt = "@"; ws.getCell(r, 11).numFmt = "yyyy-mm-dd";
+    ws.getCell(r, 7).value = "Monthly";
+    if (defC) ws.getCell(r, 3).value = defC;
+    if (defB) ws.getCell(r, 4).value = bLabel(defB);
   }
   const dv = (rng, o) => ws.dataValidations.add(rng, { allowBlank: true, showErrorMessage: true, errorStyle: "stop", ...o });
-  dv(`B2:B${N + 1}`, { type: "list", formulae: [`Lists!$A$1:$A$${used.length}`], errorTitle: "Class", error: "Choose a class from the list." });
-  dv(`C2:C${N + 1}`, { type: "list", formulae: [`Lists!$B$1:$B$${B.length}`], errorTitle: "Batch", error: "Choose a batch from the list. Add new batches in the portal first." });
-  dv(`G2:G${N + 1}`, { type: "list", formulae: ['"Active,Inactive,Suspended,Left"'], errorTitle: "Status", error: "Choose Active, Inactive, Suspended or Left." });
-  dv(`F2:F${N + 1}`, { type: "decimal", operator: "greaterThanOrEqual", formulae: [0], errorTitle: "Fee", error: "Enter a number." });
+  // School/College: suggestions only. Any other text is accepted (no error popup).
+  ws.dataValidations.add(`B2:B${N + 1}`, { type: "list", allowBlank: true, showErrorMessage: false, formulae: [`Lists!$C$1:$C$${SL.length}`] });
+  dv(`C2:C${N + 1}`, { type: "list", formulae: [`Lists!$A$1:$A$${used.length}`], errorTitle: "Class", error: "Choose a class from the list." });
+  dv(`D2:D${N + 1}`, { type: "list", formulae: [`Lists!$B$1:$B$${B.length}`], errorTitle: "Batch", error: "Choose a batch from the list. Add new batches in the portal first." });
+  dv(`G2:G${N + 1}`, { type: "list", formulae: ['"Monthly,Course"'], errorTitle: "Fee plan", error: "Choose Monthly or Course." });
+  dv(`H2:H${N + 1}`, { type: "decimal", operator: "greaterThanOrEqual", formulae: [0], errorTitle: "Fee", error: "Enter a number." });
+  dv(`I2:I${N + 1}`, { type: "decimal", operator: "greaterThanOrEqual", formulae: [0], errorTitle: "Paid amount", error: "Enter a number." });
+  dv(`J2:J${N + 1}`, { type: "list", formulae: ['"Active,Inactive,Suspended,Left"'], errorTitle: "Status", error: "Choose Active, Inactive, Suspended or Left." });
   help.getColumn(1).width = 90;
   ["How to fill the Students sheet", "1. Name is required. Rows without a name are ignored.",
-   "2. Class and Batch are dropdowns of the classes and batches created in the portal. Leave them empty to use the class and batch chosen in the Import window.",
-   "3. Status defaults to Active. Joined defaults to today (use YYYY-MM-DD or DD/MM/YYYY).",
-   "4. Student IDs are created automatically during import.",
-   "5. Created a new batch since downloading? Download a fresh template."].forEach((t, i) => { help.getCell(i + 1, 1).value = t; if (!i) help.getCell(1, 1).font = { bold: true }; help.getCell(i + 1, 1).alignment = { wrapText: true }; });
+   "2. School/College Name: pick from the suggestions or type any other name.",
+   "3. Class and Batch are dropdowns of the classes and batches created in the portal. Leave them empty to use the class and batch chosen in the Import window.",
+   "4. Fee plan is Monthly or Course (empty = Monthly). Monthly/Course Fee is the monthly amount, or the total course fee.",
+   "5. Paid amount (optional) is what the student has already paid. It is recorded as a payment: oldest month first for Monthly, or against the total for Course. It cannot exceed the course fee.",
+   "6. Status defaults to Active. Joined defaults to today (use YYYY-MM-DD or DD/MM/YYYY). Monthly billing starts from the joining month.",
+   "7. Student IDs are created automatically during import.",
+   "8. Created a new batch since downloading? Download a fresh template."].forEach((t, i) => { help.getCell(i + 1, 1).value = t; if (!i) help.getCell(1, 1).font = { bold: true }; help.getCell(i + 1, 1).alignment = { wrapText: true }; });
   const buf = await wb.xlsx.writeBuffer();
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
@@ -1708,6 +1793,9 @@ function pdfOpen(title, inner) {
   .sum{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin:6px 0 10px}.sum div{border:1px solid #cdd9e5;border-radius:6px;padding:5px 8px;background:#f4f8fc;break-inside:avoid}.sum small{display:block;color:#64809b;font-size:10px}.sum b{font-size:14px}
   .scale{font-size:10px;color:#475b70;margin-top:4px}.scale table{border-collapse:collapse;width:100%}.scale td,.scale th{border:1px solid #cdd9e5;padding:2px 5px;text-align:center;font-size:10px}.scale th{background:#eaf1f8}
   .sig{display:flex;justify-content:space-between;margin-top:34px;color:#64809b;font-size:11px;break-inside:avoid}.sig span{border-top:1px solid #9bb0c5;padding-top:4px;min-width:150px;text-align:center}
+  .rh{display:grid;grid-template-columns:1fr auto 1fr;gap:10px;align-items:start;margin:4px 0 12px;font-size:12px;line-height:1.6}.rh .c{text-align:center}.rh .r{text-align:right}.rh .l{text-align:left}.rh h2{margin:0 0 2px;font-size:16px;letter-spacing:.2em;text-transform:uppercase}.rh .ex{font-size:14px;font-weight:700}
+  .st3{display:flex;justify-content:center;gap:8px;margin:0 0 12px}.st3 div{min-width:150px;border:1px solid #cdd9e5;border-radius:6px;padding:5px 9px;background:#f4f8fc;break-inside:avoid;display:flex;flex-direction:column}.st3 small{color:#64809b;font-size:10px}.st3 b{font-size:15px;text-align:right}
+  .sigr{display:flex;justify-content:flex-end;margin-top:40px;break-inside:avoid}.sigr span{border-top:1px solid #9bb0c5;padding-top:4px;min-width:150px;text-align:center;color:#64809b;font-size:11px}
   .F{color:#dc2626;font-weight:700}.ft{position:fixed;left:0;right:0;bottom:6mm;text-align:center;font-size:10px;color:#64809b}
   @media screen{.ft{position:static;padding:10px 0 14px}}
   @media print{body{background:#fff}.bar{display:none}.sheet{margin:0;box-shadow:none;width:auto;min-height:0}}
@@ -1731,14 +1819,19 @@ function rsExamPdf(id) {
     return `<tr><td>${c.st === "Pass" && rank ? `<b>${POS[rank]}</b>` : "–"}</td><td>${esc(s.sid)}</td><td class="l">${esc(s.name)}</td>${P.map((p) => `<td>${isAbs(r) || r[p.k] === "" || r[p.k] == null ? "–" : nf(r[p.k])}</td>`).join("")}
      <td><b>${has ? nf(c.total) : "–"}</b></td><td>${has ? nf(c.pct) : "–"}</td><td class="${c.grade === "F" ? "F" : ""}">${has ? esc(c.grade) : c.st === "Absent" ? "AB" : "–"}</td><td>${has ? g2(c.gpa) : "–"}</td>
      <td class="${c.st === "Fail" ? "F" : ""}">${{ Pass: "Passed", Fail: "Failed", Absent: "Absent", Incomplete: "Incomplete", Pending: "–", Invalid: "–" }[c.st]}</td></tr>`; };
-  const dist = GRADES.map((g) => g[1]);
   pdfOpen(`${e.name} - ${e.subject} - Result`, `
-  <h2 class="ti">Result Sheet</h2>
-  <div class="info"><div><b>Exam</b> ${esc(e.name)}</div><div><b>Date</b> ${fmtD(e.date)}</div><div><b>Subject</b> ${esc(e.subject)}</div>${e.type ? `<div><b>Exam type</b> ${esc(e.type)}</div>` : ""}<div><b>Class / Batch</b> ${esc(batchTxt(e))}</div>
-   ${e.chapters ? `<div style="grid-column:1/-1"><b>Chapters</b> ${esc(e.chapters)}</div>` : ""}<div><b>Full marks</b> ${nf(examFull(e))}</div><div><b>Parts</b> ${esc(partsTxt(e))}</div></div>
+  <div class="rh">
+   <div class="l"><div>${fmtD(e.date)}</div><div>${esc(batchTxt(e))}</div></div>
+   <div class="c"><h2>Result Sheet</h2><div class="ex">${esc(e.name)} - ${esc(e.subject)}</div>${e.chapters ? `<div>Chapters: ${esc(e.chapters)}</div>` : ""}</div>
+   <div class="r"><div>Full Marks: ${nf(examFull(e))}</div><div>${esc(partsTxt(e))}</div></div>
+  </div>
+  <div class="st3">
+   <div><small>Appeared</small><b>${S.appeared} / ${S.all}</b></div>
+   <div><small>Passed/ Failed/ Absent</small><b>${S.passed}/${S.failed}/${S.absent}</b></div>
+   <div><small>Highest/ Lowest</small><b>${S.hi === null ? "–" : nf(S.hi)}/${S.lo === null ? "–" : nf(S.lo)}</b></div>
+  </div>
   <table class="t"><thead><tr><th>Position</th><th>Student ID</th><th class="l">Name</th>${P.map((p) => `<th>${p.l}<br>(${nf(p.full)})</th>`).join("")}<th>Total<br>(${nf(examFull(e))})</th><th>%</th><th>Grade</th><th>GPA</th><th>Result</th></tr></thead><tbody>${L.map(row).join("") || `<tr><td colspan="${P.length + 8}">No students</td></tr>`}</tbody></table>
-  <div class="sum">${sumCell("Appeared", S.appeared + " / " + S.all)}${sumCell("Passed", S.passed)}${sumCell("Failed", S.failed)}${sumCell("Absent", S.absent)}${sumCell("Pass rate", S.rate === null ? "–" : Math.round(S.rate) + "%")}${sumCell("Average", S.avg === null ? "–" : nf(S.avg))}${sumCell("Highest", S.hi === null ? "–" : nf(S.hi))}${sumCell("Lowest", S.lo === null ? "–" : nf(S.lo))}${sumCell("Average GPA", S.gpa === null ? "–" : g2(S.gpa))}${sumCell("Grades", dist.filter((g) => S.dist[g]).map((g) => g + ":" + S.dist[g]).join(" ") || "–")}</div>
-  ${scaleHtml()}${sigHtml()}`);
+  <div class="sigr"><span>Authorised signature</span></div>`);
 }
 function rsStuPdf() {
   const s = DB.Students.find((x) => x.id === RS.stu); if (!s) { toast("Choose a student first"); return; }
@@ -1747,7 +1840,7 @@ function rsStuPdf() {
   const b = batchOf(s), cell = (x, k) => { const p = x.c.P.find((q) => q.k === k), r = (RIX[x.e.id] || {})[s.id] || {}; return p ? (isAbs(r) || r[k] === "" ? "–" : nf(r[k])) : "n/a"; };
   pdfOpen(`${s.name} - Results`, `
   <h2 class="ti">Academic Progress Report</h2>
-  <div class="info"><div><b>Name</b> ${esc(s.name)}</div><div><b>Student ID</b> ${esc(s.sid)}</div><div><b>Class</b> ${esc(clsLabel(stuClass(s)))}</div><div><b>Batch</b> ${b ? esc(bLabel(b)) : "–"}</div>
+  <div class="info"><div><b>Name</b> ${esc(s.name)}</div><div><b>Student ID</b> ${esc(s.sid)}</div>${s.school ? `<div style="grid-column:1/-1"><b>School/College</b> ${esc(s.school)}</div>` : ""}<div><b>Class</b> ${esc(clsLabel(stuClass(s)))}</div><div><b>Batch</b> ${b ? esc(bLabel(b)) : "–"}</div>
    ${s.guardian ? `<div><b>Guardian</b> ${esc(s.guardian)}</div>` : ""}${RS.sSubj ? `<div><b>Subject</b> ${esc(RS.sSubj)}</div>` : ""}${RS.from || RS.to ? `<div><b>Period</b> ${RS.from ? fmtD(RS.from) : "start"} to ${RS.to ? fmtD(RS.to) : "today"}</div>` : ""}</div>
   <div class="sum">${sumCell("Exams taken", H.done.length)}${sumCell("Passed", H.pass)}${sumCell("Failed", H.done.length - H.pass)}${sumCell("Average %", H.avg === null ? "–" : nf(H.avg))}${sumCell("CGPA", H.cgpa === null ? "–" : g2(H.cgpa))}</div>
   <table class="t"><thead><tr><th>Date</th><th class="l">Exam</th><th class="l">Subject</th>${used.map(([, l]) => `<th>${l}</th>`).join("")}<th>Total</th><th>%</th><th>Grade</th><th>GPA</th></tr></thead><tbody>${
@@ -1755,8 +1848,7 @@ function rsStuPdf() {
       return `<tr><td>${fmtD(x.e.date)}</td><td class="l">${esc(x.e.name)}${x.e.chapters ? `<br><span class="m">${esc(x.e.chapters)}</span>` : ""}</td><td class="l">${esc(x.e.subject)}</td>${used.map(([k]) => `<td>${cell(x, k)}</td>`).join("")}
        <td>${has ? `<b>${nf(x.c.total)}</b> / ${nf(x.c.full)}` : x.c.st === "Absent" ? "Absent" : "–"}</td><td>${has ? nf(x.c.pct) : "–"}</td><td class="${x.c.grade === "F" ? "F" : ""}">${has ? esc(x.c.grade) : "–"}</td><td>${has ? g2(x.c.gpa) : "–"}</td></tr>`; }).join("") || `<tr><td colspan="${used.length + 7}">No exam results</td></tr>`}</tbody></table>
   ${H.subs.length ? `<table class="t" style="width:70%"><thead><tr><th class="l">Subject</th><th>Exams</th><th>Average %</th><th>GPA</th></tr></thead><tbody>${H.subs.map((x) => `<tr><td class="l">${esc(x.sub)}</td><td>${x.n}</td><td>${nf(x.avg)}</td><td>${g2(x.gpa)}</td></tr>`).join("")}</tbody></table>` : ""}
-  <div class="m">CGPA is the average of the GPA of all exams listed above (absent exams are left out).</div>
-  ${scaleHtml()}${sigHtml()}`);
+  ${sigHtml()}`);
 }
 
 /* ============ WATERMARK (inline SVG so it can follow the theme colours) ============ */
