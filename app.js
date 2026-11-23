@@ -91,6 +91,7 @@ const ICON = {
   skip: '<path d="M5 4l10 8-10 8z"/><path d="M19 5v14"/>',
   print: '<path d="M6 9V3h12v6M6 18H4v-7h16v7h-2M7 14h10v7H7z"/>',
   next: '<path d="M9 6l6 6-6 6"/>',
+  wa: '<path d="M12 3.5a8.5 8.5 0 0 1 0 17 8.9 8.9 0 0 1-4-.9L3.5 20.5l1-4.3a8.5 8.5 0 0 1 7.5-12.7z"/><path d="M9.2 9.4c.5-1.4 1.5-1.2 1.8-.4l.5 1.2-1 1.2c.7 1.4 1.7 2.3 3.1 3l1.2-1 1.2.5c.8.3 1 1.3-.4 1.8-3.3 1.2-7.6-3-6.4-6.3z"/>',
 };
 const VIEWS = {
   dash: "Dashboard",
@@ -98,6 +99,7 @@ const VIEWS = {
   attendance: "Attendance",
   fees: "Tuition fees",
   results: "Results",
+  wa: "WhatsApp",
   profile: "My profile",
   admin: "Admin panel",
 };
@@ -107,6 +109,7 @@ const NAVICON = {
   attendance: "att",
   fees: "fee",
   results: "res",
+  wa: "wa",
   profile: "pro",
   admin: "acc",
 };
@@ -164,7 +167,7 @@ function status(state, txt) {
 }
 
 // Excel libraries are loaded only when needed, so the app itself starts much faster
-const LIBS = { xlsx: ["XLSX", "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"], exceljs: ["ExcelJS", "https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"] };
+const LIBS = { xlsx: ["XLSX", "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"], exceljs: ["ExcelJS", "https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"], qr: ["QRCode", "https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"] };
 function lib(k) {
   const [g, url] = LIBS[k];
   if (window[g]) return Promise.resolve(true);
@@ -204,6 +207,7 @@ function local(a, p) { // browser-only demo so the interface can be tried withou
 function applyData(j) {
   DB = j.data; DB.Batches = DB.Batches || []; DB.Exams = DB.Exams || []; DB.Results = DB.Results || [];
   ME = j.me; ADMIN = j.admin || { users: [] }; VER = j.ver;
+  waLoad();
   PEND = ADMIN.users.filter((x) => x.status === "pending").length;
   document.body.classList.remove("locked"); $("#login").hidden = true;
   buildNav(); applyMe(); render(); setBell();
@@ -349,7 +353,7 @@ function render() {
   if (route === "admin" && ME.role !== "master") route = "dash";
   document.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === route));
   $("#title").textContent = VIEWS[route];
-  ({ dash: vDash, students: vStudents, attendance: vAttendance, fees: vFees, results: vResults, profile: vProfile, admin: vAdmin }[route] || vSoon)();
+  ({ dash: vDash, students: vStudents, attendance: vAttendance, fees: vFees, results: vResults, wa: vWa, profile: vProfile, admin: vAdmin }[route] || vSoon)();
   feeBadge();
 }
 
@@ -576,7 +580,7 @@ function rows() {
     L.map((s) => {
       const b = batchOf(s);
       return `<tr><td><b>${esc(s.sid)}</b></td><td>${esc(s.name)}${s.school ? `<small class="mut" style="display:block">${esc(s.school)}</small>` : ""}</td><td>${esc(clsLabel(stuClass(s)))}</td><td>${b ? esc(b.section) + " " + t12(b.start) + " " + daysTag(b) : "Unassigned"}</td><td>${esc(s.guardian)}</td><td>${esc(s.phone)}</td><td>${esc(s.fee)}<small class="mut"> ${s.feeType === "Course" ? "course" : "/month"}</small></td><td><span class="chip s-${esc(s.status)}">${esc(s.status)}</span></td>
-   <td style="text-align:right"><span class="ra">${icoBtn("", "Edit student", `editStudent('${s.id}')`, "edit")}${icoBtn("del", "Delete student", `delStudent('${s.id}')`, "trash")}</span></td></tr>`;
+   <td style="text-align:right"><span class="ra">${icoBtn("", "WhatsApp this student", `waOpenStudent('${s.id}')`, "wa")}${icoBtn("", "Edit student", `editStudent('${s.id}')`, "edit")}${icoBtn("del", "Delete student", `delStudent('${s.id}')`, "trash")}</span></td></tr>`;
     }).join("") ||
     `<tr><td colspan="9"><div class="empty">No students match. Clear the filters or use Add student.</div></td></tr>`;
 }
@@ -1849,6 +1853,555 @@ function rsStuPdf() {
        <td>${has ? `<b>${nf(x.c.total)}</b> / ${nf(x.c.full)}` : x.c.st === "Absent" ? "Absent" : "–"}</td><td>${has ? nf(x.c.pct) : "–"}</td><td class="${x.c.grade === "F" ? "F" : ""}">${has ? esc(x.c.grade) : "–"}</td><td>${has ? g2(x.c.gpa) : "–"}</td></tr>`; }).join("") || `<tr><td colspan="${used.length + 7}">No exam results</td></tr>`}</tbody></table>
   ${H.subs.length ? `<table class="t" style="width:70%"><thead><tr><th class="l">Subject</th><th>Exams</th><th>Average %</th><th>GPA</th></tr></thead><tbody>${H.subs.map((x) => `<tr><td class="l">${esc(x.sub)}</td><td>${x.n}</td><td>${nf(x.avg)}</td><td>${g2(x.gpa)}</td></tr>`).join("")}</tbody></table>` : ""}
   ${sigHtml()}`);
+}
+
+/* ============ WHATSAPP (OpenWA gateway) ============
+   Sends through a self-hosted OpenWA server (https://github.com/rmyndharis/OpenWA).
+   Settings (gateway URL, API key, session, country code, pause) live only in this
+   browser, per TuitionPro account. Sending is one-by-one with a pause between
+   messages, so WhatsApp treats it like normal human typing. */
+const WA = {
+  tab: "individual", msg: "", lq: "", stu: "", cls: "", bat: "", incAll: false,
+  file: null, log: [], run: null, pend: null, sess: null,
+  cfg: { url: "", key: "", session: "", cc: "880", dmin: 4, dmax: 8 },
+};
+const WA_MAX = 45 * 1024 * 1024; // gateway media cap is 50 MiB — stay safely under it
+const WA_VARS = ["name", "sid", "class", "batch", "guardian", "school", "status"];
+const WA_ST_LABEL = { ready: "Connected", qr_ready: "QR scan needed", initializing: "Starting…", authenticating: "Authenticating…", created: "Not started", disconnected: "Disconnected", action_required: "Action needed", failed: "Failed" };
+const WA_CSS = `
+.wastools{gap:10px}
+.wachip{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;padding:7px 13px;border-radius:999px;background:rgba(100,125,160,.14);color:var(--tx)}
+.wachip .dot{width:8px;height:8px;border-radius:50%;background:#8a97a8;flex:none}
+.wachip.ok .dot{background:var(--ok)}.wachip.warn .dot{background:var(--warn)}.wachip.bad .dot{background:var(--bad)}
+.wachip small{font-weight:500;color:var(--mut)}
+.wachip .btn{padding:3px 10px;font-size:12px}
+.wacard{display:flex;flex-direction:column;gap:10px;padding:14px}
+.wacard .in{width:100%}
+.wasug{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;display:none;max-height:240px;overflow:auto;border-radius:12px;padding:6px}
+.wasug.on{display:block}
+.wasug-i{padding:8px 10px;border-radius:8px;cursor:pointer;display:flex;flex-direction:column}
+.wasug-i:hover{background:rgba(100,125,160,.14)}
+.wasug-i small{color:var(--mut);font-size:11.5px}
+.waone{display:flex;align-items:center;gap:10px;padding:4px 0}
+.waone .avx{width:38px;height:38px;border-radius:50%;background:var(--ac);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex:none}
+.waone .ai{flex:1;min-width:0}
+.waone .ai small{display:block;color:var(--mut);font-size:11.5px}
+.wainfo{font-size:13px;color:var(--mut)}
+.wainfo b{color:var(--tx)}
+.wasee{display:flex;flex-wrap:wrap;gap:6px;max-height:170px;overflow:auto;padding:2px}
+.wasee-i{display:inline-flex;flex-direction:column;font-size:12px;padding:4px 9px;border-radius:8px;background:rgba(100,125,160,.12)}
+.wasee-i small{color:var(--mut);font-size:10.5px}
+.wasee-i.off{opacity:.55}
+.wacomp{display:flex;flex-direction:column;padding:14px}
+.wacomp textarea{resize:vertical;min-height:96px;font:inherit}
+.wafill{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.wafill .btn{font-size:11.5px;padding:3px 9px;border-radius:7px}
+.wafile{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
+.wafile .chip{display:inline-flex;align-items:center;gap:6px}
+.waact{display:flex;gap:8px;margin-top:12px;align-items:center}
+.waprog{padding:16px}
+.waprog-h{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.waprog-h small{display:block;color:var(--mut);font-size:12px}
+.waprog-n{font-size:15px}
+.wabar{height:10px;border-radius:999px;background:rgba(100,125,160,.18);overflow:hidden;margin:10px 0}
+.wabar i{display:block;height:100%;background:var(--ac);border-radius:999px;transition:width .4s}
+.waprog-s{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.waerrs{margin-top:10px;display:flex;flex-direction:column;gap:5px;max-height:150px;overflow:auto}
+.waerr-i{font-size:12.5px;background:rgba(220,80,80,.1);padding:6px 9px;border-radius:8px}
+.waqr{display:flex;align-items:center;justify-content:center;min-height:250px;padding:10px;background:#fff;border-radius:12px}
+.waqr img{width:232px;height:232px}
+.waqr-ok{font-weight:700;color:var(--ok);font-size:15px}
+`;
+(function () { const st = document.createElement("style"); st.textContent = WA_CSS; document.head.appendChild(st); })();
+
+const waKey = () => "tp_wa_" + (ME && ME.id ? ME.id : "demo");
+function waLoad() {
+  try { WA.cfg = Object.assign(WA.cfg, JSON.parse(localStorage.getItem(waKey() + "_cfg") || "{}")); } catch (e) {}
+  try { WA.log = JSON.parse(localStorage.getItem(waKey() + "_log") || "[]"); } catch (e) { WA.log = []; }
+}
+function waSaveCfg() { try { localStorage.setItem(waKey() + "_cfg", JSON.stringify(WA.cfg)); } catch (e) {} }
+function waSaveLog() { try { localStorage.setItem(waKey() + "_log", JSON.stringify(WA.log.slice(0, 200))); } catch (e) {} }
+const waBase = () => { let u = String(WA.cfg.url || "").trim().replace(/\/+$/, ""); return u && !/\/api$/i.test(u) ? u + "/api" : u; };
+const waReady = () => Boolean(waBase() && WA.cfg.key && WA.cfg.session);
+const waSleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// "01712345678" -> "8801712345678@c.us" using the country code from settings
+function waPhone(raw) {
+  let d = String(raw || "").replace(/\D/g, "");
+  if (!d) return "";
+  if (d.startsWith("00")) d = d.slice(2);
+  const cc = String(WA.cfg.cc || "").replace(/\D/g, "");
+  if (cc && d.startsWith("0")) d = cc + d.slice(1);
+  else if (cc && d.length <= 10 && !d.startsWith(cc)) d = cc + d;
+  return d.length >= 8 && d.length <= 15 ? d + "@c.us" : "";
+}
+function waVarVal(s, k) {
+  if (k === "name") return s.name || "";
+  if (k === "sid") return s.sid || "";
+  if (k === "class") return clsLabel(stuClass(s));
+  if (k === "batch") { const b = batchOf(s); return b ? bLabel(b) : "Unassigned"; }
+  return s[k] || "";
+}
+const waFill = (t, s) => String(t || "").replace(/\{(\w+)\}/gi, (m, k) => (WA_VARS.includes(k.toLowerCase()) ? waVarVal(s, k.toLowerCase()) : m));
+
+async function waCall(path, opts = {}) {
+  let r;
+  try { r = await fetch(waBase() + path, Object.assign({ headers: { "X-API-Key": WA.cfg.key, "Content-Type": "application/json" } }, opts)); }
+  catch (e) { throw new Error("Cannot reach the gateway (" + e.message + ")"); }
+  let j = null;
+  try { j = await r.json(); } catch (e) {}
+  if (!r.ok) {
+    const e = new Error((j && (j.message || j.error)) || "Gateway error (HTTP " + r.status + ")");
+    e.status = r.status; e.retry = Number(r.headers && r.headers.get("Retry-After")) || 0;
+    throw e;
+  }
+  return j;
+}
+const waListResp = (j) => (Array.isArray(j) ? j : (j && (j.items || j.data || j.sessions)) || []);
+const waMediaKind = (mt) => (mt.startsWith("image/") ? "send-image" : mt.startsWith("video/") ? "send-video" : mt.startsWith("audio/") ? "send-audio" : "send-document");
+async function waSendOne(s, msg, file) {
+  const chatId = waPhone(s.phone);
+  if (!chatId) throw new Error("No phone number");
+  const sess = encodeURIComponent(WA.cfg.session);
+  if (file) {
+    const body = { chatId, base64: file.b64, mimetype: file.mimetype, filename: file.filename };
+    if (msg && msg.length <= 1024) body.caption = msg;
+    await waCall("/sessions/" + sess + "/messages/" + waMediaKind(file.mimetype), { method: "POST", body: JSON.stringify(body) });
+    if (msg && msg.length > 1024) await waCall("/sessions/" + sess + "/messages/send-text", { method: "POST", body: JSON.stringify({ chatId, text: msg }) });
+  } else {
+    await waCall("/sessions/" + sess + "/messages/send-text", { method: "POST", body: JSON.stringify({ chatId, text: msg }) });
+  }
+}
+function waLogAdd(s, kind, ok, err, label) {
+  WA.log.unshift({ ts: new Date().toISOString(), name: s.name || "", sid: s.sid || "", phone: s.phone || "", kind, file: kind === "text" ? "" : (WA.file ? WA.file.filename : ""), ok: ok ? 1 : 0, err: err || "", label: label || "" });
+  WA.log = WA.log.slice(0, 200);
+  waSaveLog();
+}
+
+/* ----- connection status ----- */
+async function waCheckConn() {
+  const el = $("#wa_conn"); if (!el) return;
+  if (!waReady()) { el.className = "wachip bad"; el.innerHTML = '<i class="dot"></i>Not configured'; return; }
+  el.className = "wachip"; el.innerHTML = '<i class="dot"></i>Checking…';
+  try {
+    const j = await waCall("/sessions/" + encodeURIComponent(WA.cfg.session));
+    const st = (j && j.status) || (j && j.data && j.data.status) || "";
+    const ph = (j && j.phone) || (j && j.data && j.data.phone) || "";
+    if (st === "ready") { el.className = "wachip ok"; el.innerHTML = '<i class="dot"></i>WhatsApp connected' + (ph ? ' · <small>' + esc(ph) + '</small>' : ""); }
+    else {
+      el.className = "wachip " + (st === "qr_ready" ? "warn" : "bad");
+      el.innerHTML = '<i class="dot"></i>' + esc(WA_ST_LABEL[st] || st || "Unknown") + ' <button class="btn" onclick="waQrModal()">Connect</button>';
+    }
+  } catch (e) { el.className = "wachip bad"; el.innerHTML = '<i class="dot"></i>Gateway offline <small>' + esc(e.message) + '</small>'; }
+}
+
+/* ----- navigation ----- */
+function waTab(t) { WA.tab = t; vWa(); }
+function waOpenStudent(id) { WA.stu = id; WA.tab = "individual"; go("wa"); }
+
+/* ----- view ----- */
+function vWa() {
+  const tabs = [["individual", "Individual"], ["batch", "Class / Batch"], ["everyone", "Everyone"], ["history", "History"]];
+  $("#view").innerHTML = `
+  <div class="glass tools wastools">
+   <span class="wachip" id="wa_conn"></span>
+   <span class="grow"></span>
+   <button class="btn" onclick="waSettings()">WhatsApp settings</button>
+  </div>
+  ${!waReady() && !WA.run ? '<div class="warnbox" style="margin-top:12px">WhatsApp is not connected yet. Open <b>WhatsApp settings</b>, point it at your OpenWA gateway, choose a session and link the phone by QR code.</div>' : ""}
+  ${WA.run ? waProgressHtml() : `
+  <div class="glass tools" style="margin-top:12px">
+   <div class="tabs">${tabs.map(([k, l]) => `<button class="${WA.tab === k ? "on" : ""}" onclick="waTab('${k}')">${l}</button>`).join("")}</div>
+  </div>
+  <div id="wa_body" style="margin-top:12px">${waTabBody()}</div>`}`;
+  if (!WA.run) waCheckConn();
+  if (WA.tab === "individual") waIndBind();
+  else if (WA.tab === "history") { const el = $("#wa_lq"); if (el) el.oninput = (e) => { WA.lq = e.target.value; const tb = $("#wa_ltb"); if (tb) tb.innerHTML = waLogRows(); }; }
+  else waRefreshInfo();
+}
+function waTabBody() {
+  if (WA.tab === "history") return waHistoryHtml();
+  if (WA.tab === "individual") return `
+  <div class="wacard glass">
+   <div style="position:relative"><input class="in" id="wa_q" placeholder="Search a student by name, ID, class or phone" autocomplete="off"><div class="wasug glass" id="wa_sug"></div></div>
+   <div id="wa_ind">${waIndCard()}</div>
+  </div>
+  ${waComposer()}
+  <div class="waact"><button class="btn p" id="wa_send1" onclick="waSendInd()">Send now</button></div>`;
+  if (WA.tab === "batch") {
+    if (!DB.Batches.length) return `<div class="glass pad empty">Create a class and batch first, then you can message a whole batch.<br><br><button class="btn p" onclick="editBatch()">Add Class/Batch</button></div>`;
+    const used = CLASSES.filter((c) => DB.Batches.some((b) => b.class === c));
+    const B = sortBatches(DB.Batches).filter((b) => !WA.cls || b.class === WA.cls);
+    return `
+  <div class="wacard glass">
+   <select class="in" id="wa_bc" onchange="waPickCls(this.value)">
+    <option value="">Select class</option>
+    ${used.map((c) => `<option value="${esc(c)}" ${WA.cls === c ? "selected" : ""}>${esc(clsLabel(c))}</option>`).join("")}
+   </select>
+   <select class="in" id="wa_bb" onchange="WA.bat=this.value;waRefreshInfo()" ${WA.cls ? "" : "disabled"}>
+    <option value="">All batches in this class</option>
+    ${B.map((b) => `<option value="${esc(b.id)}" ${WA.bat === b.id ? "selected" : ""}>${esc(bLabel(b))}</option>`).join("")}
+   </select>
+   <label class="chk"><input type="checkbox" ${WA.incAll ? "checked" : ""} onchange="WA.incAll=this.checked;waRefreshInfo()"><span>Include Inactive, Suspended and Left students</span></label>
+   <div class="wainfo" id="wa_info"></div>
+   <div class="wasee" id="wa_see"></div>
+  </div>
+  ${waComposer()}
+  <div class="waact"><button class="btn p" onclick="waConfirm()">Review &amp; send…</button></div>`;
+  }
+  if (!DB.Students.length) return `<div class="glass pad empty">No students yet. Add or import students first.</div>`;
+  return `
+  <div class="wacard glass">
+   <label class="chk"><input type="checkbox" ${WA.incAll ? "checked" : ""} onchange="WA.incAll=this.checked;waRefreshInfo()"><span>Include Inactive, Suspended and Left students</span></label>
+   <div class="wainfo" id="wa_info"></div>
+   <div class="wasee" id="wa_see"></div>
+  </div>
+  ${waComposer()}
+  <div class="waact"><button class="btn p" onclick="waConfirm()">Review &amp; send…</button></div>`;
+}
+function waPickCls(c) { WA.cls = c; WA.bat = ""; vWa(); }
+
+/* ----- recipients + info ----- */
+function waList() {
+  let L;
+  if (WA.tab === "individual") { const s = DB.Students.find((x) => x.id === WA.stu); L = s ? [s] : []; }
+  else if (WA.tab === "batch") {
+    if (!WA.cls) L = [];
+    else if (WA.bat) L = DB.Students.filter((s) => s.batchId === WA.bat);
+    else L = DB.Students.filter((s) => { const b = batchOf(s); return b && b.class === WA.cls; });
+  } else L = DB.Students.slice();
+  return WA.tab === "individual" ? L : L.filter((s) => WA.incAll || s.status === "Active");
+}
+function waStats(L) {
+  const ok = L.filter((s) => waPhone(s.phone));
+  return { n: L.length, noPhone: L.length - ok.length, dups: ok.length - new Set(ok.map((s) => waPhone(s.phone))).size };
+}
+function waRefreshInfo() {
+  const el = $("#wa_info"); if (!el) return;
+  const L = waList(), st = waStats(L);
+  if (WA.tab === "batch" && !WA.cls) { el.textContent = "Choose a class to pick recipients."; const see = $("#wa_see"); if (see) see.innerHTML = ""; return; }
+  el.innerHTML = `Sending to <b>${st.n - st.noPhone}</b> of ${st.n} selected` +
+    (st.noPhone ? ` · <span style="color:var(--warn)">${st.noPhone} without a phone</span>` : "") +
+    (st.dups ? ` · ${st.dups} duplicate number${st.dups > 1 ? "s" : ""}` : "");
+  const see = $("#wa_see");
+  if (see) {
+    see.innerHTML = L.slice(0, 120).map((s) => `<span class="wasee-i${waPhone(s.phone) ? "" : " off"}">${esc(s.name)}<small>${esc(s.phone || "no phone")}</small></span>`).join("") +
+      (L.length > 120 ? `<span class="wasee-i off">+${L.length - 120} more…</span>` : "") ||
+      '<span class="mut" style="font-size:12.5px">No recipients — choose a class or batch above.</span>';
+  }
+}
+
+/* ----- individual tab ----- */
+function waIndBind() {
+  const q = $("#wa_q"); if (!q) return;
+  const sug = $("#wa_sug");
+  const draw = () => {
+    const v = (q.value || "").trim().toLowerCase();
+    if (!v) { sug.classList.remove("on"); sug.innerHTML = ""; return; }
+    const L = DB.Students.filter((s) => [s.name, s.sid, s.phone, s.guardian, s.school].join(" ").toLowerCase().includes(v)).slice(0, 8);
+    sug.innerHTML = L.length ? L.map((s) => `<div class="wasug-i" onclick="waPickStu('${s.id}')"><b>${esc(s.name)}</b><small>${esc(s.sid)} · ${esc(s.phone || "no phone")}</small></div>`).join("") : '<div class="wasug-i"><small>No students match</small></div>';
+    sug.classList.add("on");
+  };
+  q.oninput = draw;
+  q.onfocus = draw;
+  if (!window._waSugHook) {
+    window._waSugHook = true;
+    document.addEventListener("click", (e) => { const s = $("#wa_sug"); if (s && !e.target.closest(".wasug") && e.target.id !== "wa_q") s.classList.remove("on"); });
+  }
+}
+function waPickStu(id) {
+  WA.stu = id;
+  const sug = $("#wa_sug"); if (sug) { sug.classList.remove("on"); sug.innerHTML = ""; }
+  const q = $("#wa_q"); if (q) q.value = "";
+  const el = $("#wa_ind"); if (el) el.innerHTML = waIndCard();
+}
+function waIndCard() {
+  const s = DB.Students.find((x) => x.id === WA.stu);
+  if (!s) return '<div class="mut" style="font-size:13px;padding:8px 2px">Pick a student above, or use the WhatsApp button on any student row in the Students page.</div>';
+  const b = batchOf(s);
+  return `<div class="waone">
+   <div class="avx">${init(s.name)}</div>
+   <div class="ai"><b>${esc(s.name)}</b><small>${esc(s.sid)}${b ? " · " + esc(bLabel(b)) : ""}${s.guardian ? " · Guardian: " + esc(s.guardian) : ""}</small></div>
+   <span class="chip s-${esc(s.status)}">${esc(s.status)}</span>
+  </div>
+  ${waPhone(s.phone) ? "" : '<div class="warnbox" style="margin-top:8px">No valid phone number on this student — add one in the student form (e.g. 01712345678).</div>'}`;
+}
+async function waSendInd() {
+  const s = DB.Students.find((x) => x.id === WA.stu);
+  if (!s) { toast("Pick a student first"); return; }
+  const msg = String(WA.msg || "").trim();
+  if (!msg && !WA.file) { toast("Type a message or attach a file"); return; }
+  if (!WA.file && msg.length > 4096) { toast("WhatsApp messages are limited to 4096 characters"); return; }
+  if (!waReady()) { waSettings(); return; }
+  if (!waPhone(s.phone)) { toast("This student has no valid phone number"); return; }
+  const btn = $("#wa_send1");
+  if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
+  const kind = WA.file ? waMediaKind(WA.file.mimetype).replace("send-", "") : "text";
+  try {
+    await waSendOne(s, waFill(msg, s), WA.file);
+    waLogAdd(s, kind, true, "", "Individual");
+    toast("Message sent to " + s.name);
+  } catch (e) {
+    waLogAdd(s, kind, false, e.message, "Individual");
+    toast("Not sent: " + e.message);
+  }
+  if (btn) { btn.disabled = false; btn.textContent = "Send now"; }
+}
+
+/* ----- composer ----- */
+function waComposer() {
+  return `<div class="wacomp glass">
+   <label class="lbl">Message</label>
+   <textarea class="in" id="wa_msg" rows="5" placeholder="Type the message to send… Use {name}, {sid}, {class}, {batch}, {guardian} or {school} — filled per student." oninput="WA.msg=this.value">${esc(WA.msg || "")}</textarea>
+   <div class="wafill">${WA_VARS.map((v) => `<button class="btn" onclick="waIns('{${v}}')">{${v}}</button>`).join("")}</div>
+   <div class="wafile" id="wa_filebox">${waFileBox()}</div>
+   <input type="file" id="wa_file" hidden onchange="waReadFile(event)">
+   <p class="mut" id="wa_hint" style="font-size:12px;margin:6px 2px 0">${WA.file ? "The attached file goes to every selected student." : "Attach an image, video, audio or document to send it with the message."}</p>
+  </div>`;
+}
+function waFileBox() {
+  if (!WA.file) return '<button class="btn" onclick="$(\'#wa_file\').click()">Attach file</button>';
+  return `<span class="chip">${esc(WA.file.filename)} <small>${(WA.file.size / 1048576).toFixed(1)} MB</small></span><button class="btn d" onclick="waDelFile()">Remove</button>`;
+}
+function waRefreshFile() {
+  const fb = $("#wa_filebox"); if (fb) fb.innerHTML = waFileBox();
+  const h = $("#wa_hint"); if (h) h.textContent = WA.file ? "The attached file goes to every selected student." : "Attach an image, video, audio or document to send it with the message.";
+}
+function waReadFile(e) {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  if (f.size > WA_MAX) { toast("That file is too big. Keep attachments under 45 MB."); return; }
+  const r = new FileReader();
+  r.onerror = () => toast("Could not read that file");
+  r.onload = () => {
+    const d = String(r.result || ""), m = d.match(/^data:([^;]+);base64,([\s\S]*)$/);
+    if (!m) { toast("Could not read that file"); return; }
+    WA.file = { b64: m[2], mimetype: m[1] || "application/octet-stream", filename: (f.name || "attachment").slice(0, 200), size: f.size };
+    waRefreshFile();
+  };
+  r.readAsDataURL(f);
+}
+function waDelFile() { WA.file = null; waRefreshFile(); }
+function waIns(t) {
+  const el = $("#wa_msg"); if (!el) return;
+  const a = el.selectionStart || 0, b = el.selectionEnd || 0;
+  el.value = el.value.slice(0, a) + t + el.value.slice(b);
+  WA.msg = el.value;
+  el.focus(); el.selectionStart = el.selectionEnd = a + t.length;
+}
+
+/* ----- broadcast: confirm + engine ----- */
+function waConfirm() {
+  const msg = String(WA.msg || "").trim();
+  if (!msg && !WA.file) { toast("Type a message or attach a file"); return; }
+  if (!WA.file && msg.length > 4096) { toast("WhatsApp messages are limited to 4096 characters"); return; }
+  if (!waReady()) { waSettings(); toast("Set up the WhatsApp gateway first"); return; }
+  const L = waList(), st = waStats(L);
+  if (!L.length) { toast("No recipients selected"); return; }
+  if (st.n - st.noPhone <= 0) { toast("None of these students has a phone number"); return; }
+  const b = WA.bat ? DB.Batches.find((x) => x.id === WA.bat) : null;
+  const label = WA.tab === "batch" ? (b ? bLabel(b) : clsLabel(WA.cls) + " — all batches") : "Everyone";
+  WA.pend = { list: L, label };
+  $("#modal").innerHTML = `<h2>Send to ${st.n - st.noPhone} student${st.n - st.noPhone > 1 ? "s" : ""}?</h2>
+  <p style="margin-bottom:10px"><b>${esc(label)}</b>${WA.file ? ` · ${esc(WA.file.filename)}` : ""}</p>
+  <div class="warnbox">${st.noPhone ? `<b>${st.noPhone}</b> of them have no phone number and will be skipped. ` : ""}${st.dups ? `${st.dups} number${st.dups > 1 ? "s appear" : " appears"} more than once. ` : ""}${WA.file && msg.length > 1024 ? "The message is longer than 1024 characters, so each student gets it as a text and then the file. " : ""}Sending is one by one with a pause between messages.</div>
+  <label class="chk" style="margin-top:10px"><input type="checkbox" id="wa_dedup" checked><span>Send only once to each phone number</span></label>
+  <div class="acts"><button class="btn" onclick="closeM()">Cancel</button><button class="btn p" onclick="waStart()">Send now</button></div>`;
+  $("#ov").classList.add("on");
+}
+async function waStart() {
+  const P = WA.pend || { list: [], label: "" };
+  const dedup = !$("#wa_dedup") || $("#wa_dedup").checked;
+  closeM();
+  if (WA.run && !WA.run.done) { toast("A broadcast is already running"); return; }
+  const msg = String(WA.msg || "").trim(), file = WA.file;
+  try {
+    const j = await waCall("/sessions/" + encodeURIComponent(WA.cfg.session));
+    const st = (j && j.status) || "";
+    if (st !== "ready") {
+      if (st === "qr_ready") waQrModal(); else waSettings();
+      toast("WhatsApp session is " + (WA_ST_LABEL[st] || st) + " — link the phone first");
+      return;
+    }
+  } catch (e) { toast("Gateway not reachable: " + e.message); return; }
+  const seen = new Set(), list = [];
+  let noPhone = 0, dup = 0;
+  P.list.forEach((s) => {
+    const c = waPhone(s.phone);
+    if (!c) { noPhone++; return; }
+    if (dedup && seen.has(c)) { dup++; return; }
+    seen.add(c); list.push(s);
+  });
+  if (!list.length) { toast("No one to send to"); return; }
+  waRun(list, P.label, msg, file, { noPhone, dup });
+}
+async function waRun(list, label, msg, file, skip) {
+  WA.run = { list, i: 0, ok: 0, fail: 0, errs: [], stop: false, pause: false, done: false, label, msg, file, skip };
+  vWa();
+  const R = WA.run;
+  for (R.i = 0; R.i < list.length && !R.stop; R.i++) {
+    while (R.pause && !R.stop) await waSleep(300);
+    if (R.stop) break;
+    const s = list[R.i];
+    let err = "";
+    const kind = file ? waMediaKind(file.mimetype).replace("send-", "") : "text";
+    try { await waSendOne(s, waFill(msg, s), file); R.ok++; }
+    catch (e) {
+      if (e.status === 429 && e.retry) {
+        await waSleep(Math.min(e.retry, 120) * 1000 + 1000);
+        try { await waSendOne(s, waFill(msg, s), file); R.ok++; }
+        catch (e2) { err = e2.message; R.fail++; R.errs.push({ name: s.name, err }); }
+      } else { err = e.message; R.fail++; R.errs.push({ name: s.name, err }); }
+    }
+    WA.file = file; // waLogAdd reads the filename from here
+    waLogAdd(s, kind, !err, err, label);
+    WA.file = file;
+    if (route === "wa") vWa();
+    if (R.i + 1 < list.length && !R.stop) await waSleep(((Number(WA.cfg.dmin) || 3) + Math.random() * Math.max(0, (Number(WA.cfg.dmax) || 8) - (Number(WA.cfg.dmin) || 3))) * 1000);
+  }
+  R.done = true;
+  if (route === "wa") vWa(); else toast("WhatsApp broadcast finished: " + R.ok + " sent" + (R.fail ? ", " + R.fail + " failed" : ""));
+}
+function waProgressHtml() {
+  const R = WA.run, n = R.list.length, p = Math.min(R.i + (R.done ? 0 : 1), n);
+  return `<div class="glass waprog">
+   <div class="waprog-h"><div><b>${esc(R.label)}</b><small>${R.done ? "Finished" : R.stop ? "Stopping…" : R.pause ? "Paused" : "Sending in progress"} — sending continues if you leave this page</small></div><b class="waprog-n">${p} / ${n}</b></div>
+   <div class="wabar"><i style="width:${n ? Math.round((p / n) * 100) : 100}%"></i></div>
+   <div class="waprog-s"><span class="chip s-Active">${R.ok} sent</span><span class="chip s-Left">${R.fail} failed</span>${!R.done && !R.stop ? '<span class="mut">Now: ' + esc((R.list[R.i] || {}).name || "") + "</span>" : ""}</div>
+   ${R.skip.noPhone || R.skip.dup ? `<div class="mut" style="font-size:12px;margin-top:6px">Skipped ${R.skip.noPhone} without a phone and ${R.skip.dup} duplicate number${R.skip.dup === 1 ? "" : "s"}.</div>` : ""}
+   ${R.errs.length ? `<div class="waerrs">${R.errs.slice(-8).map((e) => `<div class="waerr-i"><b>${esc(e.name)}</b> — ${esc(e.err)}</div>`).join("")}</div>` : ""}
+   <div class="acts">${R.done ? '<button class="btn p" onclick="waClearRun()">Done</button>' : (R.stop ? "" : `<button class="btn" onclick="waPause()">${R.pause ? "Resume" : "Pause"}</button>`) + (R.done ? "" : '<button class="btn d" onclick="waStop()">Stop</button>')}</div>
+  </div>`;
+}
+function waPause() { const R = WA.run; if (!R || R.done) return; R.pause = !R.pause; if (route === "wa") vWa(); }
+function waStop() { const R = WA.run; if (!R || R.done) return; R.stop = true; if (route === "wa") vWa(); }
+function waClearRun() { WA.run = null; vWa(); }
+
+/* ----- history ----- */
+function waHistoryHtml() {
+  return `<div class="glass tools">
+   <input class="in grow" id="wa_lq" placeholder="Search history by name, ID, attachment or error" value="${esc(WA.lq || "")}">
+   <button class="btn d" onclick="waClearLog()">Clear history</button>
+  </div>
+  <div class="glass tw" style="margin-top:12px"><table><thead><tr><th>When</th><th>Recipient</th><th>Type</th><th>Attachment</th><th>Sent as</th><th>Result</th></tr></thead><tbody id="wa_ltb">${waLogRows()}</tbody></table></div>`;
+}
+function waLogRows() {
+  const q = String(WA.lq || "").toLowerCase();
+  const L = WA.log.filter((x) => !q || [x.name, x.sid, x.phone, x.file, x.label, x.err].join(" ").toLowerCase().includes(q));
+  return L.map((x) => `<tr><td>${new Date(x.ts).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</td>
+   <td><b>${esc(x.name)}</b><small class="mut" style="display:block">${esc(x.sid)} · ${esc(x.phone)}</small></td>
+   <td>${esc(x.kind)}</td><td>${esc(x.file || "–")}</td><td>${esc(x.label)}</td>
+   <td>${x.ok ? '<span class="chip s-Active">Sent</span>' : `<span class="chip s-Left">Failed</span><small class="mut" style="display:block">${esc(x.err)}</small>`}</td></tr>`).join("") ||
+   '<tr><td colspan="6"><div class="empty">Nothing sent yet from this device.</div></td></tr>';
+}
+function waClearLog() { if (!confirm("Clear the WhatsApp history on this device?")) return; WA.log = []; waSaveLog(); vWa(); }
+
+/* ----- settings + session + QR ----- */
+function waSettings() {
+  const c = WA.cfg;
+  $("#modal").innerHTML = `<h2>WhatsApp settings</h2>
+  <p class="mut" style="font-size:12.5px;margin-bottom:10px">Connects to your self-hosted <b>OpenWA</b> gateway. The URL and API key are stored only in this browser, per TuitionPro account, and are sent directly to your gateway. Use an <b>HTTPS</b> gateway URL — TuitionPro itself runs on HTTPS, and browsers block plain-HTTP gateway calls from an HTTPS page.</p>
+  <div class="f">
+   <label class="full">Gateway URL<input class="in" id="wa_u" placeholder="https://wa.yourdomain.com" value="${esc(c.url)}"></label>
+   <label class="full">API key<input class="in" id="wa_k" type="password" placeholder="owa_…" value="${esc(c.key)}"></label>
+   <label class="full">WhatsApp session
+    <span style="display:flex;gap:8px;align-items:center"><select class="in grow" id="wa_sess"><option value="">Select a session</option></select><button class="btn" onclick="waLoadSess()">Load</button></span>
+   </label>
+   <label>Country code<input class="in" id="wa_cc" value="${esc(c.cc)}" placeholder="880"></label>
+   <label>Pause between messages (seconds)<span style="display:flex;gap:8px"><input class="in" id="wa_dmin" type="number" min="1" max="120" value="${esc(c.dmin)}" title="Minimum"><input class="in" id="wa_dmax" type="number" min="1" max="120" value="${esc(c.dmax)}" title="Maximum"></span></label>
+  </div>
+  <div id="wa_st" class="mut" style="font-size:12.5px;margin:8px 2px"></div>
+  <div class="acts" style="justify-content:space-between;flex-wrap:wrap">
+   <button class="btn" onclick="waTest()">Test connection</button>
+   <span style="display:flex;gap:8px"><button class="btn" onclick="waNewSess()">New session</button><button class="btn p" onclick="waSaveSettings()">Save</button></span>
+  </div>`;
+  waFillSess();
+  $("#ov").classList.add("on");
+}
+function waFillSess() {
+  const sel = $("#wa_sess"); if (!sel) return;
+  sel.innerHTML = '<option value="">Select a session</option>' + (WA.sess || []).map((s) => `<option value="${esc(s.id)}" ${s.id === WA.cfg.session ? "selected" : ""}>${esc(s.name || s.id)} — ${esc(s.status || "?")}${s.phone ? " · " + esc(s.phone) : ""}</option>`).join("");
+  if (!WA.sess && waReady()) waLoadSess(true);
+}
+async function waLoadSess(quiet) {
+  const st = $("#wa_st");
+  if ($("#wa_u")) { WA.cfg.url = $("#wa_u").value.trim(); WA.cfg.key = $("#wa_k").value.trim(); }
+  if (!waBase() || !WA.cfg.key) { if (!quiet && st) st.textContent = "Enter the gateway URL and API key first."; return; }
+  try {
+    const j = await waCall("/sessions");
+    WA.sess = waListResp(j);
+    if (!$("#wa_sess")) return;
+    waFillSess();
+    if (!quiet && st) st.textContent = "Found " + WA.sess.length + " session" + (WA.sess.length === 1 ? "" : "s") + ". Pick one, then press Save.";
+  } catch (e) { if (!quiet && st) st.textContent = "Could not load sessions: " + e.message; }
+}
+async function waTest() {
+  const st = $("#wa_st"); if (!st) return;
+  const tmp = { url: $("#wa_u").value.trim(), key: $("#wa_k").value.trim(), session: $("#wa_sess").value };
+  const old = Object.assign({}, WA.cfg);
+  Object.assign(WA.cfg, tmp);
+  st.textContent = "Testing…";
+  try {
+    const L = waListResp(await waCall("/sessions"));
+    if (!tmp.session) st.textContent = "Gateway OK — " + L.length + " session" + (L.length === 1 ? "" : "s") + " found. Choose one and press Save.";
+    else {
+      const s = L.find((x) => x.id === tmp.session), stat = s ? s.status : "not found";
+      st.innerHTML = "Gateway OK — session: <b>" + esc(stat === "ready" ? "ready and connected" : WA_ST_LABEL[stat] || stat) + "</b>" + (stat === "qr_ready" ? " — save, then press Connect to scan the QR." : ". Press Save when done.");
+    }
+  } catch (e) { st.textContent = "Failed: " + e.message; }
+  finally { Object.assign(WA.cfg, old); }
+}
+function waSaveSettings() {
+  WA.cfg.url = $("#wa_u").value.trim();
+  WA.cfg.key = $("#wa_k").value.trim();
+  WA.cfg.session = $("#wa_sess").value;
+  WA.cfg.cc = $("#wa_cc").value.trim() || "880";
+  WA.cfg.dmin = Math.max(1, Number($("#wa_dmin").value) || 4);
+  WA.cfg.dmax = Math.max(WA.cfg.dmin, Number($("#wa_dmax").value) || WA.cfg.dmin + 4);
+  waSaveCfg();
+  closeM(); vWa();
+  toast("WhatsApp settings saved");
+}
+async function waNewSess() {
+  if ($("#wa_u")) { WA.cfg.url = $("#wa_u").value.trim(); WA.cfg.key = $("#wa_k").value.trim(); }
+  if (!waBase() || !WA.cfg.key) { const st = $("#wa_st"); if (st) st.textContent = "Enter the gateway URL and API key first."; return; }
+  const name = prompt("Name for the new WhatsApp session", "tuitionpro");
+  if (!name) return;
+  const st = $("#wa_st"); st.textContent = "Creating session…";
+  try {
+    const j = await waCall("/sessions", { method: "POST", body: JSON.stringify({ name }) });
+    const id = (j && j.id) || (j && j.data && j.data.id) || "";
+    WA.cfg.session = id;
+    waSaveSettings();
+    waQrModal();
+  } catch (e) { st.textContent = "Could not create the session: " + e.message; }
+}
+async function waQrModal() {
+  if (!waReady()) { waSettings(); return; }
+  $("#modal").innerHTML = `<h2>Link WhatsApp</h2>
+  <div class="waqr" id="wa_qrbox"><div class="mut" style="color:#17324d">Loading QR code…</div></div>
+  <p class="mut" style="font-size:12.5px;margin-top:10px">On the phone: <b>WhatsApp → Settings → Linked devices → Link a device</b>, then scan. The QR refreshes by itself. Keep this window open until it says connected.</p>
+  <div class="acts"><button class="btn" onclick="closeM()">Close</button></div>`;
+  $("#ov").classList.add("on");
+  waQrPoll();
+}
+async function waQrPoll() {
+  const box = $("#wa_qrbox");
+  if (!box) return; // modal was closed — stop polling
+  try {
+    const j = await waCall("/sessions/" + encodeURIComponent(WA.cfg.session));
+    const st = (j && j.status) || "";
+    if (st === "ready") { box.innerHTML = '<div class="waqr-ok">WhatsApp connected' + (j.phone ? " · " + esc(j.phone) : "") + "</div>"; waCheckConn(); return; }
+    if (["created", "disconnected", "failed"].includes(st)) await waCall("/sessions/" + encodeURIComponent(WA.cfg.session) + "/start", { method: "POST" }).catch(() => {});
+    const q = await waCall("/sessions/" + encodeURIComponent(WA.cfg.session) + "/qr").catch(() => null);
+    const data = (q && (q.qr || (q.data && q.data.qr) || q.qrcode || (q.data && q.data.qrcode))) || "";
+    if (data.startsWith("data:image")) box.innerHTML = `<img src="${data}" alt="QR">`;
+    else if (data) {
+      await lib("qr");
+      const b2 = $("#wa_qrbox");
+      if (b2 && window.QRCode) { b2.innerHTML = ""; new QRCode(b2, { text: data, width: 232, height: 232, correctLevel: QRCode.CorrectLevel.M }); }
+    } else box.innerHTML = '<div class="mut" style="color:#17324d">' + esc(WA_ST_LABEL[st] || st || "Waiting for the QR code…") + "</div>";
+  } catch (e) { box.innerHTML = '<div class="mut" style="color:#17324d">' + esc(e.message) + "</div>"; }
+  setTimeout(waQrPoll, 2500);
 }
 
 /* ============ WATERMARK (inline SVG so it can follow the theme colours) ============ */
