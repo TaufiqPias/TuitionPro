@@ -1,7 +1,7 @@
 /* ============ CONFIG ============
    The Apps Script URL lives in config.js (so you never have to edit this file). */
 const API_URL = (window.TP_CONFIG && window.TP_CONFIG.API_URL) || "";
-const NEED_BUILD = "6"; // must match BUILD in Code.gs
+const NEED_BUILD = "7"; // must match BUILD in Code.gs
 const POLL_MS = 10000;
 const CLASSES = [
   "1",
@@ -1369,6 +1369,7 @@ const partsTxt = (e) => examParts(e).map((p) => `${p.l} ${nf(p.full)}`).join(" +
 const rix = () => { RIX = {}; DB.Results.forEach((r) => ((RIX[r.examId] = RIX[r.examId] || {})[r.studentId] = r)); };
 const batchTxt = (e) => { const b = DB.Batches.find((x) => x.id === e.batchId); return b ? `${clsLabel(b.class)} · ${bLabel(b)}` : "Deleted batch"; };
 const isAbs = (r) => r && (r.absent === "1" || r.absent === 1 || r.absent === true);
+const POS = ["", "1st", "2nd", "3rd", "4th", "5th"];
 const gchip = (c) => c.grade ? `<span class="chip ${gcls(c.grade)}">${esc(c.grade)}</span>` : "";
 const stchip = (c) => {
   const m = { Pass: ["s-Present", "Pass"], Fail: ["s-Absent", c.failed && c.failed.length ? "Fail (" + c.failed.join(", ") + ")" : "Fail"], Absent: ["s-Inactive", "Absent"], Incomplete: ["s-Partial", "Incomplete"], Invalid: ["s-Absent", "Check marks"], Pending: ["s-Inactive", "Not entered"] }[c.st];
@@ -1401,6 +1402,7 @@ function examTable(e, getRow) {
   const L = examRoster(e).map((s) => ({ s, c: calcRes(e, getRow(s.id)), rank: 0 }));
   const done = L.filter((x) => x.c.st === "Pass" || x.c.st === "Fail"), pass = done.filter((x) => x.c.st === "Pass");
   [...pass].sort((a, b) => b.c.total - a.c.total).forEach((x, i, A) => (x.rank = i && x.c.total === A[i - 1].c.total ? A[i - 1].rank : i + 1));
+  L.forEach((x) => { if (x.rank > 5) x.rank = 0; }); // only the first 5 positions are awarded
   const dist = {}; GRADES.forEach((g) => (dist[g[1]] = 0)); done.forEach((x) => dist[x.c.grade]++);
   const st = {
     all: L.length, appeared: done.length, passed: pass.length, failed: done.length - pass.length,
@@ -1435,7 +1437,7 @@ function rsTab(t) { if (!rsGuard()) return; RS.tab = t; RS.exam = ""; vResults()
 function rsExams() {
   const q = RS.q.toLowerCase(), E = DB.Exams.map((e) => ({ e, T: examTable(e, (sid) => (RIX[e.id] || {})[sid]) }));
   const done = E.flatMap(({ T }) => T.L.filter((x) => x.c.st === "Pass" || x.c.st === "Fail"));
-  const L = E.filter(({ e }) => (!RS.batch || e.batchId === RS.batch) && (!RS.subj || e.subject === RS.subj) && (!q || [e.name, e.subject, e.chapters].join(" ").toLowerCase().includes(q)))
+  const L = E.filter(({ e }) => (!RS.batch || e.batchId === RS.batch) && (!RS.subj || e.subject === RS.subj) && (!q || [e.name, e.type, e.subject, e.chapters].join(" ").toLowerCase().includes(q)))
     .sort((a, b) => String(b.e.date).localeCompare(String(a.e.date)) || String(a.e.name).localeCompare(b.e.name));
   $("#rs_body").innerHTML = `
   <div class="grid stats">
@@ -1450,7 +1452,7 @@ function rsExams() {
    <select class="in" id="rsu"><option value="">All subjects</option>${subjList().filter((s) => DB.Exams.some((e) => e.subject === s)).map((s) => `<option ${RS.subj === s ? "selected" : ""}>${esc(s)}</option>`).join("")}</select>
   </div>
   <div class="glass tw"><table><thead><tr><th>Date</th><th>Exam</th><th>Subject</th><th>Class / Batch</th><th>Parts</th><th>Full</th><th>Entered</th><th>Pass rate</th><th>Avg %</th><th></th></tr></thead><tbody>${
-    L.map(({ e, T }) => `<tr class="clk" onclick="rsOpen('${e.id}')" title="Open marks sheet"><td>${fmtD(e.date)}</td><td><b>${esc(e.name)}</b>${e.chapters ? `<small class="mut" style="display:block">${esc(e.chapters)}</small>` : ""}</td><td>${esc(e.subject)}</td><td>${esc(batchTxt(e))}</td>
+    L.map(({ e, T }) => `<tr class="clk" onclick="rsOpen('${e.id}')" title="Open marks sheet"><td>${fmtD(e.date)}</td><td><b>${esc(e.name)}</b><small class="mut" style="display:block">${esc([e.type, e.chapters].filter(Boolean).join(" · "))}</small></td><td>${esc(e.subject)}</td><td>${esc(batchTxt(e))}</td>
      <td>${examParts(e).map((p) => `<span class="chip s-Inactive">${p.l[0] === "V" ? "Viva" : p.l} ${nf(p.full)}</span>`).join(" ")}</td><td><b>${nf(examFull(e))}</b></td>
      <td>${T.st.entered}/${T.st.all}</td><td>${T.st.rate === null ? "–" : Math.round(T.st.rate) + "%"}</td><td>${T.st.avgPct === null ? "–" : nf(T.st.avgPct) + "%"}</td>
      <td style="text-align:right"><span class="ra">${icoBtn("", "Enter / view marks", `rsOpen('${e.id}')`, "list")}${icoBtn("", "Export PDF", `rsExamPdf('${e.id}')`, "print")}${icoBtn("", "Edit exam", `editExam('${e.id}')`, "edit")}${icoBtn("del", "Delete exam", `delExam('${e.id}')`, "trash")}</span></td></tr>`).join("") ||
@@ -1467,10 +1469,9 @@ function editExam(id) {
   const on = (k, f) => (e ? Number(e[f]) > 0 : k === "w");
   $("#modal").innerHTML = `<h2>${e ? "Edit exam" : "New exam"}</h2>
   <div class="f">
-   <label>Exam name<input class="in" id="x_name" list="x_names" placeholder="e.g. Monthly Test" value="${esc(e ? e.name : "")}"></label>
-   <label>Subject<input class="in" id="x_subj" list="x_subjs" placeholder="e.g. Physics" value="${esc(e ? e.subject : "")}"></label>
-   <datalist id="x_names">${[...new Set([...EXAM_NAMES, ...DB.Exams.map((x) => x.name)])].map((n) => `<option value="${esc(n)}">`).join("")}</datalist>
-   <datalist id="x_subjs">${subjList().map((n) => `<option value="${esc(n)}">`).join("")}</datalist>
+   <label>Exam name<input class="in" id="x_name" autocomplete="off" placeholder="Type the exam name" value="${esc(e ? e.name : "")}"></label>
+   <label>Subject<input class="in" id="x_subj" autocomplete="off" placeholder="Type the subject" value="${esc(e ? e.subject : "")}"></label>
+   <label class="full">Exam type<select class="in" id="x_type"><option value="">Select exam type</option>${EXAM_NAMES.map((n) => `<option ${e && e.type === n ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
    <label class="full">Chapters covered<input class="in" id="x_chap" placeholder="e.g. Chapter 1-3, 5" value="${esc(e ? e.chapters : "")}"></label>
    <label>Date<input class="in" id="x_date" type="date" value="${esc(e ? e.date : dKey(new Date()))}"></label>
    <label>Class &amp; Batch<select class="in" id="x_batch"><option value="">Select class &amp; batch</option>${B.map((b) => `<option value="${esc(b.id)}" ${defB === b.id ? "selected" : ""}>${esc(clsLabel(b.class) + " · " + bLabel(b))}</option>`).join("")}</select></label>
@@ -1495,9 +1496,10 @@ async function saveExam(id) {
   const g = (k) => $("#x_" + k).value.trim(), old = DB.Exams.find((x) => x.id === id);
   if (!g("name")) { toast("Enter the exam name"); return; }
   if (!g("subj")) { toast("Enter the subject"); return; }
+  if (!g("type")) { toast("Choose the exam type"); return; }
   if (!g("date")) { toast("Choose the exam date"); return; }
   if (!g("batch")) { toast("Choose the class and batch"); return; }
-  const row = { id: id || uid(), name: g("name"), subject: g("subj"), chapters: g("chap"), date: g("date"), batchId: g("batch"), eachPass: "", created: old ? old.created : new Date().toISOString() };
+  const row = { id: id || uid(), name: g("name"), subject: g("subj"), type: g("type"), chapters: g("chap"), date: g("date"), batchId: g("batch"), eachPass: "", created: old ? old.created : new Date().toISOString() };
   let n = 0, c = 0;
   for (const [k, , f] of PARTS) {
     const on = $("#x_" + k + "_on").checked, v = Number(g(k));
@@ -1539,18 +1541,18 @@ function rsSheet() {
    <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">
     <div style="flex:1;min-width:220px"><h3 style="font-size:17px;margin-bottom:2px">${esc(e.name)} <span class="mut" style="font-weight:500">· ${esc(e.subject)}</span></h3>
      <div class="mut" style="font-size:12.5px">${esc(batchTxt(e))} · ${fmtD(e.date)}${e.chapters ? " · " + esc(e.chapters) : ""}</div>
-     <div class="pills" style="margin-top:8px"><span class="chip s-Active">Full marks ${nf(examFull(e))}</span><span class="chip s-Inactive">${esc(partsTxt(e))}</span>${e.eachPass === "1" ? '<span class="chip s-Suspended">Pass each part</span>' : ""}</div></div>
+     <div class="pills" style="margin-top:8px">${e.type ? `<span class="chip s-Suspended">${esc(e.type)}</span>` : ""}<span class="chip s-Active">Full marks ${nf(examFull(e))}</span><span class="chip s-Inactive">${esc(partsTxt(e))}</span>${e.eachPass === "1" ? '<span class="chip s-Suspended">Pass each part</span>' : ""}</div></div>
     <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" onclick="rsBack()">← Exams</button><button class="btn" onclick="editExam('${e.id}')">Edit exam</button><button class="btn" onclick="rsExamPdf('${e.id}')">Export PDF</button><button class="btn p" id="rs_save" onclick="rsSave()" disabled>Save marks</button></div>
    </div></div>
   <div class="rss" id="rs_stats"></div>
-  <div class="glass tw"><table style="min-width:${560 + P.length * 90}px"><thead><tr><th>Pos.</th><th>Student</th>${P.map((p) => `<th>${p.l}<small style="display:block;font-weight:500">out of ${nf(p.full)}</small></th>`).join("")}<th>Absent</th><th>Total<small style="display:block;font-weight:500">out of ${nf(examFull(e))}</small></th><th>%</th><th>Grade</th><th>GPA</th><th>Result</th></tr></thead><tbody>${
+  <div class="glass tw"><table style="min-width:${560 + P.length * 90}px"><thead><tr><th>Position</th><th>Student</th>${P.map((p) => `<th>${p.l}<small style="display:block;font-weight:500">out of ${nf(p.full)}</small></th>`).join("")}<th>Absent</th><th>Total<small style="display:block;font-weight:500">out of ${nf(examFull(e))}</small></th><th>%</th><th>Grade</th><th>GPA</th><th>Result</th></tr></thead><tbody>${
     T.L.map(({ s }) => { const v = RS.vals[s.id];
       return `<tr data-s="${s.id}"><td class="rk"></td><td><b>${esc(s.name)}</b><small class="mut" style="display:block">${esc(s.sid)}</small></td>${
         P.map((p) => `<td><input class="in mk" type="number" step="any" min="0" max="${p.full}" inputmode="decimal" data-s="${s.id}" data-k="${p.k}" value="${esc(v[p.k])}" oninput="rsIn(this)" onkeydown="rsKey(event)"></td>`).join("")}
        <td><input type="checkbox" class="ab" data-s="${s.id}" data-k="absent" ${v.absent ? "checked" : ""} onchange="rsIn(this)" style="accent-color:var(--bad);width:17px;height:17px"></td>
        <td class="tt"></td><td class="pc"></td><td class="gd"></td><td class="gp"></td><td class="stt"></td></tr>`; }).join("") ||
     `<tr><td colspan="${P.length + 7}"><div class="empty">No active students in this batch yet.</div></td></tr>`}</tbody></table></div>
-  <p class="mut" style="font-size:12px;margin:8px 2px">Type marks and press Enter to jump to the next student. Leave a student blank to enter later. Grading: 80+ A+ (5.00), 70 A (4.00), 60 A- (3.50), 50 B (3.00), 40 C (2.00), 33 D (1.00), below 33 F (0.00).</p>`;
+  <p class="mut" style="font-size:12px;margin:8px 2px">Position (1st to 5th) goes to the five highest totals among passed students; equal totals share a position. Leave a student blank to enter later. Grading: 80+ A+ (5.00), 70 A (4.00), 60 A- (3.50), 50 B (3.00), 40 C (2.00), 33 D (1.00), below 33 F (0.00).</p>`;
   rsPaint();
 }
 function rsPaint() {
@@ -1560,7 +1562,7 @@ function rsPaint() {
     const tr = document.querySelector(`tr[data-s="${s.id}"]`); if (!tr) return;
     const set = (cl, h) => { const el = tr.querySelector("." + cl); if (el) el.innerHTML = h; };
     const has = c.st === "Pass" || c.st === "Fail";
-    set("rk", c.st === "Pass" ? rank : "–"); set("tt", has ? `<b>${nf(c.total)}</b>` : ""); set("pc", has ? nf(c.pct) : "");
+    set("rk", c.st === "Pass" && rank ? `<b>${POS[rank]}</b>` : "–"); set("tt", has ? `<b>${nf(c.total)}</b>` : ""); set("pc", has ? nf(c.pct) : "");
     set("gd", has ? gchip(c) : ""); set("gp", has ? g2(c.gpa) : ""); set("stt", stchip(c));
     const ab = RS.vals[s.id].absent === "1";
     tr.querySelectorAll("input.mk").forEach((i) => { i.disabled = ab; const p = P.find((x) => x.k === i.dataset.k), n = Number(i.value); i.classList.toggle("bad", i.value !== "" && (isNaN(n) || n < 0 || n > p.full)); });
@@ -1726,15 +1728,15 @@ function rsExamPdf(id) {
   const ord = { Pass: 0, Fail: 1, Incomplete: 2, Pending: 2, Invalid: 2, Absent: 3 };
   const L = [...T.L].sort((a, b) => ord[a.c.st] - ord[b.c.st] || (b.c.total || 0) - (a.c.total || 0) || String(a.s.sid).localeCompare(String(b.s.sid)));
   const row = ({ s, c, rank }) => { const r = (RIX[e.id] || {})[s.id] || {}, has = c.st === "Pass" || c.st === "Fail";
-    return `<tr><td>${c.st === "Pass" ? rank : "–"}</td><td>${esc(s.sid)}</td><td class="l">${esc(s.name)}</td>${P.map((p) => `<td>${isAbs(r) || r[p.k] === "" || r[p.k] == null ? "–" : nf(r[p.k])}</td>`).join("")}
+    return `<tr><td>${c.st === "Pass" && rank ? `<b>${POS[rank]}</b>` : "–"}</td><td>${esc(s.sid)}</td><td class="l">${esc(s.name)}</td>${P.map((p) => `<td>${isAbs(r) || r[p.k] === "" || r[p.k] == null ? "–" : nf(r[p.k])}</td>`).join("")}
      <td><b>${has ? nf(c.total) : "–"}</b></td><td>${has ? nf(c.pct) : "–"}</td><td class="${c.grade === "F" ? "F" : ""}">${has ? esc(c.grade) : c.st === "Absent" ? "AB" : "–"}</td><td>${has ? g2(c.gpa) : "–"}</td>
      <td class="${c.st === "Fail" ? "F" : ""}">${{ Pass: "Passed", Fail: "Failed", Absent: "Absent", Incomplete: "Incomplete", Pending: "–", Invalid: "–" }[c.st]}</td></tr>`; };
   const dist = GRADES.map((g) => g[1]);
   pdfOpen(`${e.name} - ${e.subject} - Result`, `
   <h2 class="ti">Result Sheet</h2>
-  <div class="info"><div><b>Exam</b> ${esc(e.name)}</div><div><b>Date</b> ${fmtD(e.date)}</div><div><b>Subject</b> ${esc(e.subject)}</div><div><b>Class / Batch</b> ${esc(batchTxt(e))}</div>
+  <div class="info"><div><b>Exam</b> ${esc(e.name)}</div><div><b>Date</b> ${fmtD(e.date)}</div><div><b>Subject</b> ${esc(e.subject)}</div>${e.type ? `<div><b>Exam type</b> ${esc(e.type)}</div>` : ""}<div><b>Class / Batch</b> ${esc(batchTxt(e))}</div>
    ${e.chapters ? `<div style="grid-column:1/-1"><b>Chapters</b> ${esc(e.chapters)}</div>` : ""}<div><b>Full marks</b> ${nf(examFull(e))}</div><div><b>Parts</b> ${esc(partsTxt(e))}</div></div>
-  <table class="t"><thead><tr><th>Pos.</th><th>Student ID</th><th class="l">Name</th>${P.map((p) => `<th>${p.l}<br>(${nf(p.full)})</th>`).join("")}<th>Total<br>(${nf(examFull(e))})</th><th>%</th><th>Grade</th><th>GPA</th><th>Result</th></tr></thead><tbody>${L.map(row).join("") || `<tr><td colspan="${P.length + 8}">No students</td></tr>`}</tbody></table>
+  <table class="t"><thead><tr><th>Position</th><th>Student ID</th><th class="l">Name</th>${P.map((p) => `<th>${p.l}<br>(${nf(p.full)})</th>`).join("")}<th>Total<br>(${nf(examFull(e))})</th><th>%</th><th>Grade</th><th>GPA</th><th>Result</th></tr></thead><tbody>${L.map(row).join("") || `<tr><td colspan="${P.length + 8}">No students</td></tr>`}</tbody></table>
   <div class="sum">${sumCell("Appeared", S.appeared + " / " + S.all)}${sumCell("Passed", S.passed)}${sumCell("Failed", S.failed)}${sumCell("Absent", S.absent)}${sumCell("Pass rate", S.rate === null ? "–" : Math.round(S.rate) + "%")}${sumCell("Average", S.avg === null ? "–" : nf(S.avg))}${sumCell("Highest", S.hi === null ? "–" : nf(S.hi))}${sumCell("Lowest", S.lo === null ? "–" : nf(S.lo))}${sumCell("Average GPA", S.gpa === null ? "–" : g2(S.gpa))}${sumCell("Grades", dist.filter((g) => S.dist[g]).map((g) => g + ":" + S.dist[g]).join(" ") || "–")}</div>
   ${scaleHtml()}${sigHtml()}`);
 }
