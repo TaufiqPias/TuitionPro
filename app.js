@@ -347,36 +347,77 @@ function nextSid(batch, joined) {
   return pre + String(n + 1).padStart(3, "0");
 }
 
-/* ============ DASHBOARD: class + batch rows ============ */
+/* ============ DASHBOARD: stats + searchable class/batch rows ============ */
+const DF = { q: "", cls: "", sec: "", day: "" };
+// Payment pending = active students with a monthly fee and no paid Fees record for the current month
+function payPending() {
+  const m = new Date().toISOString().slice(0, 7);
+  const paid = new Set((DB.Fees || []).filter((f) => f.month === m && !["", "0", "false", "no"].includes(String(f.paid).toLowerCase())).map((f) => String(f.studentId)));
+  return DB.Students.filter((s) => s.status === "Active" && Number(s.fee) > 0 && !paid.has(String(s.id))).length;
+}
 function vDash() {
   const S = DB.Students;
-  const G = sortBatches(DB.Batches).map((b) => ({ b, list: S.filter((s) => s.batchId === b.id) }));
-  const un = S.filter((s) => !DB.Batches.some((b) => b.id === s.batchId));
-  if (un.length) G.push({ b: null, list: un });
-  const count = (st) => S.filter((s) => s.status === st).length;
+  const un = S.filter((s) => !batchOf(s)).length;
+  const used = CLASSES.filter((c) => DB.Batches.some((b) => b.class === c));
   $("#view").innerHTML = `
   <div class="grid stats">
    <div class="glass stat"><small>Total students</small><b>${S.length}</b></div>
-   <div class="glass stat"><small><i style="background:var(--ok)"></i>Active</small><b>${count("Active")}</b></div>
-   <div class="glass stat"><small><i style="background:var(--warn)"></i>Suspended</small><b>${count("Suspended")}</b></div>
-   <div class="glass stat"><small><i style="background:var(--bad)"></i>Left</small><b>${count("Left")}</b></div>
+   <div class="glass stat"><small><i style="background:var(--ok)"></i>Active</small><b>${S.filter((s) => s.status === "Active").length}</b></div>
+   <div class="glass stat"><small><i style="background:var(--warn)"></i>Payment pending</small><b>${payPending()}</b></div>
+   <div class="glass stat" style="cursor:pointer" onclick="openUnassigned()" title="View them in Students"><small><i style="background:var(--ac)"></i>Unassigned</small><b>${un}</b></div>
   </div>
-  <div class="sec">Classes and batch times</div>
-  <div class="rows">${
+  <div class="glass tools" style="margin-top:12px">
+   <input class="in grow" id="dq" placeholder="Search class, batch, time, day or student" value="${esc(DF.q)}">
+   <select class="in" id="dc"><option value="">All classes</option>${used.map((c) => `<option value="${esc(c)}" ${DF.cls === c ? "selected" : ""}>${esc(clsLabel(c))}</option>`).join("")}</select>
+   <select class="in" id="ds"><option value="">All sections</option>${SECTIONS.map((s) => `<option ${DF.sec === s ? "selected" : ""}>${s}</option>`).join("")}</select>
+   <select class="in" id="dd"><option value="">All days</option>${DAYS.map(([c, , n]) => `<option value="${c}" ${DF.day === c ? "selected" : ""}>${n}</option>`).join("")}</select>
+   <button class="btn" onclick="resetDash()">Clear</button>
+  </div>
+  <div class="sec">Classes and batch times <span id="dcnt"></span></div>
+  <div class="rows" id="drows"></div>`;
+  $("#dq").oninput = (e) => { DF.q = e.target.value; dashRows(); };
+  $("#dc").onchange = (e) => { DF.cls = e.target.value; dashRows(); };
+  $("#ds").onchange = (e) => { DF.sec = e.target.value; dashRows(); };
+  $("#dd").onchange = (e) => { DF.day = e.target.value; dashRows(); };
+  dashRows();
+}
+function dashRows() {
+  const words = DF.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const dayNames = (b) => dayCodes(b).map((c) => DAYS.find((d) => d[0] === c)[2]).join(" ");
+  const G = sortBatches(DB.Batches)
+    .map((b) => ({ b, list: DB.Students.filter((s) => s.batchId === b.id) }))
+    .filter(({ b, list }) => {
+      if (DF.cls && b.class !== DF.cls) return false;
+      if (DF.sec && b.section !== DF.sec) return false;
+      if (DF.day && !dayCodes(b).includes(DF.day)) return false;
+      if (!words.length) return true;
+      const hay = [clsLabel(b.class), b.section, b.name, t12(b.start), daysTag(b), dayNames(b), list.map((s) => s.name + " " + s.sid).join(" ")].join(" ").toLowerCase();
+      return words.every((w) => hay.includes(w));
+    });
+  const filtering = DF.q || DF.cls || DF.sec || DF.day;
+  $("#dcnt").textContent = filtering ? `(${G.length} of ${DB.Batches.length})` : `(${DB.Batches.length})`;
+  $("#drows").innerHTML =
     G.map((x) => {
       const c = {};
       x.list.forEach((s) => (c[s.status] = (c[s.status] || 0) + 1));
       const pct = x.list.length ? Math.round(((c.Active || 0) / x.list.length) * 100) : 0;
-      return `<div class="glass crow" data-b="${x.b ? esc(x.b.id) : "-"}" onclick="openBatch(this)" title="Open these students">
-     <div class="cb"><b>${x.b ? esc(clsLabel(x.b.class)) : "Unassigned"}</b>${x.b && daysTag(x.b) ? `<b class="dy">${daysTag(x.b)}</b>` : ""}</div>
-     <div class="bt">${x.b ? t12(x.b.start) : "No batch"}<small>${x.b ? esc(x.b.section) + " batch" : "Edit these students to assign a batch"}</small></div>
+      return `<div class="glass crow" data-b="${esc(x.b.id)}" onclick="openBatch(this)" title="Open these students">
+     <div class="cb"><b>${esc(clsLabel(x.b.class))}</b>${daysTag(x.b) ? `<b class="dy">${daysTag(x.b)}</b>` : ""}</div>
+     <div class="bt">${t12(x.b.start)}<small>${esc(x.b.section)} batch</small></div>
      <div class="cnt"><b>${x.list.length}</b> students</div>
      <div class="pills">${STATUSES.filter((s) => c[s]).map((s) => `<span class="chip s-${s}">${c[s]} ${s}</span>`).join("")}</div>
      <div class="pr"><div><i style="width:${pct}%"></i></div><small>${pct}% active</small></div>
-     <div class="ra">${x.b ? icoBtn("", "Edit class / batch", `editBatch('${esc(x.b.id)}')`, "edit") + icoBtn("del", "Delete batch", `delBatch('${esc(x.b.id)}')`, "trash") : ""}</div></div>`;
+     <div class="ra">${icoBtn("", "Edit class / batch", `editBatch('${esc(x.b.id)}')`, "edit")}${icoBtn("del", "Delete batch", `delBatch('${esc(x.b.id)}')`, "trash")}</div></div>`;
     }).join("") ||
-    `<div class="glass empty">No classes yet. Use <b>Add Class/Batch</b> above, then add your students.</div>`
-  }</div>`;
+    `<div class="glass empty">${DB.Batches.length ? "No batches match your search or filters." : "No classes yet. Use <b>Add Class/Batch</b> above, then add your students."}</div>`;
+}
+function resetDash() {
+  Object.assign(DF, { q: "", cls: "", sec: "", day: "" });
+  vDash();
+}
+function openUnassigned() {
+  Object.assign(F, { batch: "-", cls: "", q: "", st: "" });
+  go("students");
 }
 function openBatch(el) {
   F.batch = el.dataset.b;
