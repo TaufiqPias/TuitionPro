@@ -351,6 +351,7 @@ function setTheme(t) {
 }
 function render() {
   if (route === "admin" && ME.role !== "master") route = "dash";
+  document.body.classList.toggle("wa-full", route === "wa");
   document.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === route));
   $("#title").textContent = VIEWS[route];
   ({ dash: vDash, students: vStudents, attendance: vAttendance, fees: vFees, results: vResults, wa: vWa, profile: vProfile, admin: vAdmin }[route] || vSoon)();
@@ -1855,76 +1856,258 @@ function rsStuPdf() {
   ${sigHtml()}`);
 }
 
-/* ============ WHATSAPP (OpenWA gateway) ============
-   Sends through a self-hosted OpenWA server (https://github.com/rmyndharis/OpenWA).
-   Settings (gateway URL, API key, session, country code, pause) live only in this
-   browser, per TuitionPro account. Sending is one-by-one with a pause between
-   messages, so WhatsApp treats it like normal human typing. */
+/* ============ WHATSAPP — web.whatsapp.com-style client on the OpenWA gateway ============
+   The WhatsApp page now looks and works like WhatsApp Web itself:
+   • a QR pairing screen (WhatsApp → Settings → Linked devices → scan) connects your
+     existing number through your own OpenWA gateway;
+   • a chat list with real conversations, unread badges and last-message previews;
+   • a conversation view with message bubbles (incoming/outgoing, ticks, media) pulled
+     from the gateway, plus a WhatsApp-style composer with attachments;
+   • broadcasts keep working: the megaphone button opens the composer for a whole
+     class/batch, everyone, or hand-picked students — one message at a time, with a
+     human-like pause between messages. */
 const WA = {
-  tab: "individual", msg: "", lq: "", stu: "", cls: "", bat: "", incAll: false,
-  file: null, log: [], run: null, pend: null, sess: null,
   cfg: { url: "", key: "", session: "", cc: "880", dmin: 4, dmax: 8 },
+  log: [], sess: [], conn: { st: "", phone: "", push: "" },
+  chats: [], msgs: {}, chat: "", filt: "all", q: "",
+  drafts: {}, file: null, send: {},
+  newChat: false, bc: null, run: null, pend: null,
+  tickN: 0, _acct: "", _tik: null, _tyTo: null, _tyStop: null,
 };
 const WA_MAX = 45 * 1024 * 1024; // gateway media cap is 50 MiB — stay safely under it
 const WA_VARS = ["name", "sid", "class", "batch", "guardian", "school", "status"];
 const WA_ST_LABEL = { ready: "Connected", qr_ready: "QR scan needed", initializing: "Starting…", authenticating: "Authenticating…", created: "Not started", disconnected: "Disconnected", action_required: "Action needed", failed: "Failed" };
+const WA_IC = {
+  search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+  back: '<path d="M19 12H5M12 19l-7-7 7-7"/>',
+  bc: '<path d="M3 11l18-6v14l-18-6z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>',
+  pencil: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+  send: '<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4z"/>',
+  clip: '<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+  x: '<path d="M18 6L6 18M6 6l12 12"/>',
+  refresh: '<path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M3 17l5-4 4 3 4-4 5 5"/>',
+  doc: '<path d="M6 2h8l5 5v15H6z"/><path d="M14 2v5h5"/>',
+  audio: '<path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4"/>',
+  video: '<rect x="3" y="5" width="13" height="14" rx="2"/><path d="M16 10l5-3v10l-5-3z"/>',
+  pin: '<path d="M12 16v5"/><path d="M8 4h8l-1 7 2.5 2.5V15h-11v-1.5L9 11z"/>',
+  dl: '<path d="M12 3v12M6 9l6 6 6-6M5 21h14"/>',
+  pause: '<path d="M9 5v14M15 5v14"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="1.5"/>',
+  play: '<path d="M6 4l14 8-14 8z"/>',
+  chatbig: '<path d="M12 3.5a8.5 8.5 0 0 1 0 17 8.9 8.9 0 0 1-4-.9L3.5 20.5l1-4.3a8.5 8.5 0 0 1 7.5-12.7z"/>',
+};
+const waI = (k, sz) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="width:${sz || 20}px;height:${sz || 20}px;flex:none">${WA_IC[k] || ""}</svg>`;
+const WA_AV_COLORS = ["#e542a3", "#02a698", "#7f66ff", "#0a7eb4", "#c7a935", "#e2703a", "#e54242", "#12936f", "#4552d9"];
+const waAvColor = (n) => { let h = 0; for (const ch of String(n || "?")) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return WA_AV_COLORS[h % WA_AV_COLORS.length]; };
 const WA_CSS = `
-.wastools{gap:10px}
-.wachip{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;padding:7px 13px;border-radius:999px;background:rgba(100,125,160,.14);color:var(--tx)}
-.wachip .dot{width:8px;height:8px;border-radius:50%;background:#8a97a8;flex:none}
-.wachip.ok .dot{background:var(--ok)}.wachip.warn .dot{background:var(--warn)}.wachip.bad .dot{background:var(--bad)}
-.wachip small{font-weight:500;color:var(--mut)}
-.wachip .btn{padding:3px 10px;font-size:12px}
-.wacard{display:flex;flex-direction:column;gap:10px;padding:14px}
-.wacard .in{width:100%}
-.wasug{position:absolute;left:0;right:0;top:calc(100% + 4px);z-index:30;display:none;max-height:240px;overflow:auto;border-radius:12px;padding:6px}
-.wasug.on{display:block}
-.wasug-i{padding:8px 10px;border-radius:8px;cursor:pointer;display:flex;flex-direction:column}
-.wasug-i:hover{background:rgba(100,125,160,.14)}
-.wasug-i small{color:var(--mut);font-size:11.5px}
-.waone{display:flex;align-items:center;gap:10px;padding:4px 0}
-.waone .avx{width:38px;height:38px;border-radius:50%;background:var(--ac);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex:none}
-.waone .ai{flex:1;min-width:0}
-.waone .ai small{display:block;color:var(--mut);font-size:11.5px}
-.wainfo{font-size:13px;color:var(--mut)}
-.wainfo b{color:var(--tx)}
-.wasee{display:flex;flex-wrap:wrap;gap:6px;max-height:170px;overflow:auto;padding:2px}
-.wasee-i{display:inline-flex;flex-direction:column;font-size:12px;padding:4px 9px;border-radius:8px;background:rgba(100,125,160,.12)}
-.wasee-i small{color:var(--mut);font-size:10.5px}
-.wasee-i.off{opacity:.55}
-.wacomp{display:flex;flex-direction:column;padding:14px}
-.wacomp textarea{resize:vertical;min-height:96px;font:inherit}
-.wafill{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
-.wafill .btn{font-size:11.5px;padding:3px 9px;border-radius:7px}
-.wafile{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
-.wafile .chip{display:inline-flex;align-items:center;gap:6px}
-.waact{display:flex;gap:8px;margin-top:12px;align-items:center}
-.waprog{padding:16px}
-.waprog-h{display:flex;justify-content:space-between;align-items:center;gap:10px}
-.waprog-h small{display:block;color:var(--mut);font-size:12px}
-.waprog-n{font-size:15px}
-.wabar{height:10px;border-radius:999px;background:rgba(100,125,160,.18);overflow:hidden;margin:10px 0}
-.wabar i{display:block;height:100%;background:var(--ac);border-radius:999px;transition:width .4s}
-.waprog-s{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
-.waerrs{margin-top:10px;display:flex;flex-direction:column;gap:5px;max-height:150px;overflow:auto}
-.waerr-i{font-size:12.5px;background:rgba(220,80,80,.1);padding:6px 9px;border-radius:8px}
-.waqr{display:flex;align-items:center;justify-content:center;min-height:250px;padding:10px;background:#fff;border-radius:12px}
-.waqr img{width:232px;height:232px}
-.waqr-ok{font-weight:700;color:var(--ok);font-size:15px}
+body.wa-full #view{padding:0!important;overflow:hidden!important}
+.waBoot{display:flex;align-items:center;justify-content:center;height:420px}
+#waApp{position:relative}
+.waAppIn{height:100%;display:flex}
+/* ---------- pairing screen ---------- */
+.waPair{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(180deg,#f7f8fa,#eef1f4);border-radius:14px;overflow:auto;padding:18px}
+.waPairCard{background:#fff;border:1px solid #e7ebee;border-radius:16px;box-shadow:0 10px 30px rgba(16,40,60,.08);max-width:920px;width:100%;display:flex;padding:38px 40px;gap:34px}
+.waPairL{flex:1.15;min-width:0}
+.waPairL h2{font-size:26px;color:#243f4d;font-weight:600;margin:0 0 8px;line-height:1.25}
+.waPairL>p{color:#5b7585;font-size:14.5px;margin:0 0 20px;line-height:1.5}
+.waStep{display:flex;gap:14px;margin:14px 0;align-items:flex-start}
+.waStep i{width:28px;height:28px;border-radius:50%;background:#e7f7f1;color:#00a884;font-style:normal;font-weight:700;font-size:13.5px;display:flex;align-items:center;justify-content:center;flex:none}
+.waStep div{font-size:14px;color:#3b4f5c;line-height:1.5;padding-top:4px}
+.waStep div small{display:block;color:#8aa0ad;font-size:12.5px;margin-top:2px}
+.waPairNote{margin-top:18px;font-size:12.5px;color:#8aa0ad;line-height:1.5}
+.waPairR{width:360px;flex:none;display:flex;flex-direction:column;align-items:center}
+.waQrBox{position:relative;background:#fff;border:1px solid #eef1f3;box-shadow:0 4px 18px rgba(16,40,60,.07);border-radius:14px;padding:22px;display:flex;align-items:center;justify-content:center;min-width:284px;min-height:284px}
+.waQrBox img{width:240px;height:240px;display:block}
+.waQrBox .wasp{position:absolute;inset:0;background:rgba(255,255,255,.92);display:flex;align-items:center;justify-content:center;border-radius:14px}
+.waPairSt{margin-top:14px;font-size:13.5px;color:#3b4f5c;text-align:center;min-height:20px;line-height:1.45}
+.waPairSt.ok{color:#00a884;font-weight:600}
+.waPairSt.bad{color:#c0392b}
+.waPairLinks{margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.waPairLinks button{background:none;border:none;color:#00a884;font-size:13px;font-weight:600;cursor:pointer;padding:4px 6px}
+.waPairLinks button:hover{text-decoration:underline}
+.waPairFoot{margin-top:18px;font-size:12px;color:#9db0bb;text-align:center}
+.waForm{width:100%;display:flex;flex-direction:column;gap:12px}
+.waForm label{display:block;font-size:12.5px;font-weight:600;color:#42586b}
+.waForm .in{margin-top:5px;background:#f5f7f8;border:1px solid #dfe6ea;border-radius:10px;color:#111b21}
+.waFormRow{display:flex;gap:10px}
+.waFormRow>*{flex:1}
+@media(max-width:860px){.waPairCard{flex-direction:column;padding:24px}.waPairR{width:100%}}
+/* ---------- main shell ---------- */
+.waShell{display:flex;height:100%;background:#fff;border-radius:14px;overflow:hidden;border:1px solid #e2e6ea;box-shadow:0 8px 26px rgba(16,40,60,.07)}
+.waL{width:390px;flex:none;border-right:1px solid #e9edef;display:flex;flex-direction:column;background:#fff;min-width:0}
+.waLh{display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid #f0f2f5}
+.waMe{display:flex;align-items:center;gap:10px;flex:1;min-width:0;cursor:pointer;border-radius:10px;padding:2px}
+.waMe:hover{background:#f5f6f6}
+.waMe b{display:block;font-size:14.5px;color:#111b21;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.waPill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:#54656f;font-weight:600}
+.waPill .dot{width:7px;height:7px;border-radius:50%;background:#8696a0;flex:none}
+.waPill.ok .dot{background:#25d366}.waPill.warn .dot{background:#f0a30a}.waPill.bad .dot{background:#e54242}
+.waHb{width:34px;height:34px;border:none;background:none;border-radius:50%;color:#54656f;cursor:pointer;display:flex;align-items:center;justify-content:center;position:relative}
+.waHb:hover{background:#f0f2f5}
+.waHb.on{background:#e7f7f1;color:#00a884}
+.waRunTag{display:inline-flex;align-items:center;gap:6px;background:#e7f7f1;color:#008069;font-size:12px;font-weight:700;border:none;border-radius:999px;padding:6px 12px;cursor:pointer}
+.waSearch{padding:8px 12px;display:flex;align-items:center;gap:8px;background:#fff}
+.waSearch .wsi{flex:1;display:flex;align-items:center;gap:9px;background:#f0f2f5;border-radius:9px;padding:7px 12px;color:#54656f}
+.waSearch input{border:none;background:none;outline:none;font:inherit;font-size:14px;color:#111b21;width:100%}
+.waChips{display:flex;gap:8px;padding:2px 12px 10px;flex-wrap:wrap}
+.waChip{border:none;background:#f0f2f5;color:#54656f;font-size:12.5px;font-weight:600;border-radius:999px;padding:6px 13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
+.waChip.on{background:#d9fdd3;color:#0a6e58}
+.waList{flex:1;overflow-y:auto;background:#fff}
+.waRow{display:flex;gap:12px;padding:10px 14px;cursor:pointer;align-items:center;min-width:0}
+.waRow:hover{background:#f5f6f6}
+.waRow.on{background:#f0f2f5}
+.waAv{width:47px;height:47px;border-radius:50%;color:#fff;font-weight:700;font-size:18px;display:flex;align-items:center;justify-content:center;flex:none}
+.waAv.sm{width:38px;height:38px;font-size:15px}
+.waRowM{flex:1;min-width:0;border-bottom:1px solid #f0f2f5;padding-bottom:10px;display:flex;flex-direction:column;gap:3px}
+.waRow:last-child .waRowM{border-bottom:none}
+.waRowT{display:flex;align-items:baseline;gap:8px}
+.waRowT b{flex:1;font-size:14.5px;color:#111b21;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.waRowT span{font-size:11.5px;color:#667781;flex:none}
+.waRowP{display:flex;align-items:center;gap:5px;font-size:13px;color:#667781;white-space:nowrap;overflow:hidden}
+.waRowP .pv{flex:1;overflow:hidden;text-overflow:ellipsis}
+.waRowP .tick{color:#8696a0;display:inline-flex;flex:none}
+.waRowP .tick.read{color:#53bdeb}
+.waUn{background:#25d366;color:#fff;font-size:11.5px;font-weight:700;border-radius:999px;min-width:19px;height:19px;padding:0 6px;display:flex;align-items:center;justify-content:center;flex:none}
+.waSecLbl{padding:12px 16px 6px;font-size:12px;font-weight:700;color:#8aa0ad;letter-spacing:.4px}
+.waListEmpty{padding:34px 22px;text-align:center;color:#8aa0ad;font-size:13.5px;line-height:1.6}
+.waListEmpty svg{color:#c3d0d8;margin-bottom:8px}
+/* ---------- new chat picker ---------- */
+.waPickerH{display:flex;align-items:center;gap:8px;padding:14px;border-bottom:1px solid #f0f2f5}
+.waPickerH b{font-size:16px;color:#111b21}
+.waPickRow{display:flex;gap:12px;padding:9px 14px;cursor:pointer;align-items:center}
+.waPickRow:hover{background:#f5f6f6}
+.waPickM{flex:1;min-width:0}
+.waPickM b{display:block;font-size:14px;color:#111b21;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.waPickM small{color:#667781;font-size:12px}
+.waTag{font-size:11px;font-weight:700;border-radius:999px;padding:3px 9px;background:#f0f2f5;color:#54656f;flex:none}
+.waTag.s-Active{background:#d9fdd3;color:#0a6e58}
+.waTag.s-Inactive,.waTag.s-Suspended{background:#fff3d6;color:#8a6d1a}
+.waTag.s-Left{background:#fde3e3;color:#a03030}
+/* ---------- broadcast composer ---------- */
+.waBc{display:flex;flex-direction:column;height:100%}
+.waBcH{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid #f0f2f5}
+.waBcH b{font-size:15.5px;color:#111b21}
+.waBcBody{flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:12px}
+.waSeg{display:flex;background:#f0f2f5;border-radius:10px;padding:3px;gap:3px}
+.waSeg button{flex:1;border:none;background:none;font:inherit;font-size:13px;font-weight:600;color:#54656f;border-radius:8px;padding:7px 4px;cursor:pointer}
+.waSeg button.on{background:#fff;color:#008069;box-shadow:0 1px 3px rgba(16,40,60,.14)}
+.waLbl{font-size:12px;font-weight:700;color:#54656f;letter-spacing:.3px}
+.waIn{width:100%;border:1px solid #dfe6ea;background:#f5f7f8;border-radius:10px;padding:9px 12px;font:inherit;font-size:14px;color:#111b21;outline:none}
+.waIn:focus{border-color:#00a884;background:#fff}
+.waChk{display:flex;align-items:center;gap:8px;font-size:13px;color:#3b4f5c;cursor:pointer}
+.waSees{display:flex;flex-wrap:wrap;gap:6px}
+.waSee{display:inline-flex;flex-direction:column;font-size:12px;padding:4px 10px;border-radius:9px;background:#f0f2f5;color:#111b21}
+.waSee small{color:#8aa0ad;font-size:10.5px}
+.waSee.off{opacity:.5}
+.waBcMsg{min-height:88px;resize:vertical;font:inherit}
+.waVarRow{display:flex;flex-wrap:wrap;gap:6px}
+.waVarRow button{border:1px dashed #b8c5ce;background:#f7fafb;color:#008069;font-size:11.5px;font-weight:600;border-radius:7px;padding:3px 8px;cursor:pointer}
+.waVarRow button:hover{background:#e7f7f1}
+.waFileChip{display:flex;align-items:center;gap:8px;background:#f0f2f5;border-radius:10px;padding:8px 12px;font-size:13px;color:#111b21}
+.waFileChip button{border:none;background:none;cursor:pointer;color:#e54242;display:flex}
+.waBcFoot{border-top:1px solid #f0f2f5;padding:12px 14px;display:flex;align-items:center;gap:12px}
+.waBcFoot .cnt{flex:1;font-size:13.5px;color:#3b4f5c}
+.waBcFoot .cnt b{color:#008069}
+.waGo{border:none;background:#00a884;color:#fff;font:inherit;font-size:14px;font-weight:700;border-radius:999px;padding:10px 22px;cursor:pointer;display:inline-flex;align-items:center;gap:8px}
+.waGo:hover{background:#017a61}
+.waGo:disabled{background:#b8c5ce;cursor:not-allowed}
+/* ---------- conversation ---------- */
+.waR{flex:1;min-width:0;display:flex;flex-direction:column;background:#efeae2}
+.waConvH{display:flex;align-items:center;gap:12px;padding:10px 16px;background:#f0f2f5;border-left:1px solid #e9edef;flex:none}
+.waConvH .nm{flex:1;min-width:0;cursor:pointer}
+.waConvH .nm b{display:block;font-size:15px;color:#111b21;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.waConvH .nm small{display:block;font-size:12px;color:#667781;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.waMsgs{flex:1;overflow-y:auto;padding:18px 5% 12px;background:#efeae2;background-image:radial-gradient(rgba(120,140,150,.055) 1.1px,transparent 1.1px);background-size:22px 22px;display:flex;flex-direction:column}
+.waDay{align-self:center;background:#fff;color:#54656f;font-size:12px;font-weight:600;border-radius:8px;padding:6px 12px;margin:10px 0 6px;box-shadow:0 1px 2px rgba(16,40,60,.12);letter-spacing:.3px}
+.waB{max-width:68%;border-radius:8px;padding:6px 8px 7px 10px;margin:2px 0;font-size:14.2px;line-height:1.45;color:#111b21;box-shadow:0 1px .6px rgba(11,20,26,.14);word-wrap:break-word;position:relative}
+.waB.in{background:#fff;align-self:flex-start;border-top-left-radius:2px}
+.waB.out{background:#d9fdd3;align-self:flex-end;border-top-right-radius:2px}
+.waB.sys{align-self:center;background:#fff;color:#8aa0ad;font-size:12.5px;font-style:italic;max-width:85%}
+.waB a{color:#027eb5}
+.waMeta{display:flex;justify-content:flex-end;align-items:center;gap:4px;font-size:11px;color:#667781;margin-top:2px}
+.waMeta .tick{display:inline-flex;color:#8696a0}
+.waMeta .tick.read{color:#53bdeb}
+.waMeta .tick.fail{color:#e54242;font-weight:700}
+.waAuthor{font-size:12.5px;font-weight:700;color:#027eb5;margin-bottom:1px}
+.waMed{display:flex;align-items:center;gap:10px;background:rgba(0,0,0,.045);border-radius:9px;padding:10px 12px;font-size:13px;color:#3b4f5c;cursor:pointer;margin:2px 0 4px;max-width:330px}
+.waMed:hover{background:rgba(0,0,0,.07)}
+.waMed .mic{width:34px;height:34px;border-radius:50%;background:#00a884;color:#fff;display:flex;align-items:center;justify-content:center;flex:none}
+.waMedWrap img{max-width:330px;max-height:340px;border-radius:9px;display:block;cursor:pointer}
+.waMedWrap video{max-width:330px;border-radius:9px;display:block}
+.waMedWrap audio{width:300px;display:block;margin:2px 0}
+.waLoad{align-self:center;color:#8aa0ad;font-size:13px;padding:30px 0}
+.waLoadErr{align-self:center;background:#fff;color:#a03030;font-size:13px;border-radius:10px;padding:12px 16px;margin:20px 0;text-align:center;box-shadow:0 1px 2px rgba(16,40,60,.1)}
+.waOpt{display:flex;align-items:center;gap:10px;background:#d3f1e7;border-radius:10px;padding:9px 14px;font-size:13px;color:#0a6e58;margin:4px 0;align-self:center}
+/* ---------- composer ---------- */
+.waComp{display:flex;align-items:flex-end;gap:8px;padding:8px 12px;background:#f0f2f5;flex:none;position:relative}
+.waCompTx{flex:1;background:#fff;border-radius:10px;display:flex;align-items:flex-end;min-width:0}
+.waCompTx textarea{flex:1;border:none;outline:none;background:none;font:inherit;font-size:14.5px;color:#111b21;padding:11px 14px;resize:none;max-height:120px;min-height:42px;line-height:1.4}
+.waSendB{width:44px;height:44px;border:none;border-radius:50%;background:#00a884;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;flex:none}
+.waSendB:hover{background:#017a61}
+.waSendB.dim{background:#dfe6ea;color:#a5b3bd;cursor:default}
+.waAttachM{position:absolute;bottom:60px;left:12px;background:#fff;border-radius:12px;box-shadow:0 8px 24px rgba(16,40,60,.18);padding:8px;display:none;flex-direction:column;min-width:210px;z-index:40}
+.waAttachM.on{display:flex}
+.waAttachM button{display:flex;align-items:center;gap:10px;border:none;background:none;font:inherit;font-size:13.5px;color:#111b21;padding:9px 12px;border-radius:9px;cursor:pointer}
+.waAttachM button:hover{background:#f0f2f5}
+.waCompHint{padding:0 12px 6px;background:#f0f2f5;font-size:11px;color:#8aa0ad;flex:none}
+/* ---------- empty state ---------- */
+.waEmpty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px;color:#54656f;background:#f0f2f5;border-left:1px solid #e9edef}
+.waEmpty .big{width:150px;height:150px;border-radius:50%;background:#d9fdd3;color:#00a884;display:flex;align-items:center;justify-content:center;margin-bottom:22px}
+.waEmpty h3{font-size:30px;font-weight:300;color:#41525d;margin:0 0 12px}
+.waEmpty p{font-size:14px;color:#667781;max-width:480px;line-height:1.65;margin:0 0 8px}
+.waEmpty .tips{margin-top:14px;font-size:13px;color:#667781;line-height:1.9;text-align:left;background:#fff;border-radius:12px;padding:14px 20px;box-shadow:0 1px 3px rgba(16,40,60,.1)}
+.waEmpty .tips b{color:#008069}
+/* ---------- broadcast run panel ---------- */
+.waRunH{background:#fff;border-left:1px solid #e9edef;padding:16px 20px;flex:none;border-bottom:1px solid #e9edef}
+.waRunH .rt{display:flex;justify-content:space-between;gap:10px;align-items:baseline}
+.waRunH b{font-size:15.5px;color:#111b21}
+.waRunH .rn{font-size:13px;color:#54656f;font-weight:600;white-space:nowrap}
+.waBar{height:8px;border-radius:999px;background:#e2e6ea;overflow:hidden;margin:12px 0 6px}
+.waBar i{display:block;height:100%;background:#00a884;border-radius:999px;transition:width .4s}
+.waRunMsgs{flex:1;overflow-y:auto;padding:16px 5% 12px;background:#efeae2;background-image:radial-gradient(rgba(120,140,150,.055) 1.1px,transparent 1.1px);background-size:22px 22px;display:flex;flex-direction:column}
+.waRunActs{background:#f0f2f5;border-left:1px solid #e9edef;padding:10px 16px;display:flex;gap:10px;align-items:center;flex:none}
+.waRunActs .btn{background:#fff;border:1px solid #dfe6ea}
+.waErrs{background:#fff;border-radius:10px;margin-top:10px;max-height:130px;overflow:auto;font-size:12.5px}
+.waErrs div{padding:7px 12px;border-bottom:1px solid #f5f6f6;color:#a03030}
+.waErrs div b{color:#111b21}
+/* ---------- mobile ---------- */
+@media(max-width:860px){
+  .waShell{border-radius:0;border:none}
+  #waApp{padding:0!important}
+  .waL{width:100%;border-right:none}
+  .waR,.waEmpty{border-left:none}
+  #waApp.wapm .waL{display:none}
+  #waApp:not(.wapm) .waR{display:none}
+  #waApp:not(.wapm) .waEmpty{display:none}
+  .waB{max-width:82%}
+  .waMsgs{padding:14px 3.5% 10px}
+}
 `;
 (function () { const st = document.createElement("style"); st.textContent = WA_CSS; document.head.appendChild(st); })();
 
-const waKey = () => "tp_wa_" + (ME && ME.id ? ME.id : "demo");
+/* ----- config + history storage (unchanged keys, per TuitionPro account) ----- */
+const waKey = () => "tp_wa_" + ((ME && ME.id) || "demo");
 function waLoad() {
+  const acct = (ME && ME.id) || "demo";
+  if (WA._acct === acct) return;
+  WA._acct = acct;
   try { WA.cfg = Object.assign(WA.cfg, JSON.parse(localStorage.getItem(waKey() + "_cfg") || "{}")); } catch (e) {}
   try { WA.log = JSON.parse(localStorage.getItem(waKey() + "_log") || "[]"); } catch (e) { WA.log = []; }
+  WA.conn = { st: "", phone: "", push: "" }; WA.chats = []; WA.msgs = {}; WA.chat = "";
 }
 function waSaveCfg() { try { localStorage.setItem(waKey() + "_cfg", JSON.stringify(WA.cfg)); } catch (e) {} }
 function waSaveLog() { try { localStorage.setItem(waKey() + "_log", JSON.stringify(WA.log.slice(0, 200))); } catch (e) {} }
+
+/* ----- shared helpers ----- */
 const waBase = () => { let u = String(WA.cfg.url || "").trim().replace(/\/+$/, ""); return u && !/\/api$/i.test(u) ? u + "/api" : u; };
 const waReady = () => Boolean(waBase() && WA.cfg.key && WA.cfg.session);
 const waSleep = (ms) => new Promise((r) => setTimeout(r, ms));
-// "01712345678" -> "8801712345678@c.us" using the country code from settings
+const waSid = () => encodeURIComponent(WA.cfg.session);
+// "01712345678" / "1712345678" / "+880…" -> "8801712345678@c.us" using the country code from settings
 function waPhone(raw) {
   let d = String(raw || "").replace(/\D/g, "");
   if (!d) return "";
@@ -1934,6 +2117,11 @@ function waPhone(raw) {
   else if (cc && d.length <= 10 && !d.startsWith(cc)) d = cc + d;
   return d.length >= 8 && d.length <= 15 ? d + "@c.us" : "";
 }
+const waDigits = (id) => { const m = String(id || "").split("@")[0].replace(/\D/g, ""); return m || ""; };
+function waStuForChat(id) {
+  const d = waDigits(id); if (!d) return null;
+  return DB.Students.find((s) => { const n = waDigits(waPhone(s.phone)); return n && (n === d || (n.length > 9 && d.length > 9 && n.slice(-9) === d.slice(-9))); }) || null;
+}
 function waVarVal(s, k) {
   if (k === "name") return s.name || "";
   if (k === "sid") return s.sid || "";
@@ -1942,229 +2130,477 @@ function waVarVal(s, k) {
   return s[k] || "";
 }
 const waFill = (t, s) => String(t || "").replace(/\{(\w+)\}/gi, (m, k) => (WA_VARS.includes(k.toLowerCase()) ? waVarVal(s, k.toLowerCase()) : m));
-
 async function waCall(path, opts = {}) {
   let r;
   try { r = await fetch(waBase() + path, Object.assign({ headers: { "X-API-Key": WA.cfg.key, "Content-Type": "application/json" } }, opts)); }
-  catch (e) { throw new Error("Cannot reach the gateway (" + e.message + ")"); }
+  catch (e) { throw new Error("Cannot reach the gateway (" + e.message + "). Check the gateway URL and that it is up."); }
   let j = null;
   try { j = await r.json(); } catch (e) {}
   if (!r.ok) {
     const e = new Error((j && (j.message || j.error)) || "Gateway error (HTTP " + r.status + ")");
     e.status = r.status; e.retry = Number(r.headers && r.headers.get("Retry-After")) || 0;
+    if (r.status === 401) e.msg = "The gateway rejected the API key.";
     throw e;
   }
   return j;
 }
 const waListResp = (j) => (Array.isArray(j) ? j : (j && (j.items || j.data || j.sessions)) || []);
 const waMediaKind = (mt) => (mt.startsWith("image/") ? "send-image" : mt.startsWith("video/") ? "send-video" : mt.startsWith("audio/") ? "send-audio" : "send-document");
-async function waSendOne(s, msg, file) {
-  const chatId = waPhone(s.phone);
+async function waSendOne(s, msg, file) { return waSendChat(waPhone(s.phone), msg, file); }
+async function waSendChat(chatId, msg, file) {
   if (!chatId) throw new Error("No phone number");
-  const sess = encodeURIComponent(WA.cfg.session);
   if (file) {
     const body = { chatId, base64: file.b64, mimetype: file.mimetype, filename: file.filename };
     if (msg && msg.length <= 1024) body.caption = msg;
-    await waCall("/sessions/" + sess + "/messages/" + waMediaKind(file.mimetype), { method: "POST", body: JSON.stringify(body) });
-    if (msg && msg.length > 1024) await waCall("/sessions/" + sess + "/messages/send-text", { method: "POST", body: JSON.stringify({ chatId, text: msg }) });
+    await waCall("/sessions/" + waSid() + "/messages/" + waMediaKind(file.mimetype), { method: "POST", body: JSON.stringify(body) });
+    if (msg && msg.length > 1024) await waCall("/sessions/" + waSid() + "/messages/send-text", { method: "POST", body: JSON.stringify({ chatId, text: msg }) });
   } else {
-    await waCall("/sessions/" + sess + "/messages/send-text", { method: "POST", body: JSON.stringify({ chatId, text: msg }) });
+    await waCall("/sessions/" + waSid() + "/messages/send-text", { method: "POST", body: JSON.stringify({ chatId, text: msg }) });
   }
 }
-function waLogAdd(s, kind, ok, err, label) {
-  WA.log.unshift({ ts: new Date().toISOString(), name: s.name || "", sid: s.sid || "", phone: s.phone || "", kind, file: kind === "text" ? "" : (WA.file ? WA.file.filename : ""), ok: ok ? 1 : 0, err: err || "", label: label || "" });
+function waLogAdd(o) {
+  WA.log.unshift(Object.assign({ ts: new Date().toISOString(), name: "", sid: "", phone: "", kind: "text", file: "", ok: 1, err: "", label: "" }, o));
   WA.log = WA.log.slice(0, 200);
   waSaveLog();
 }
-
-/* ----- connection status ----- */
-async function waCheckConn() {
-  const el = $("#wa_conn"); if (!el) return;
-  if (!waReady()) { el.className = "wachip bad"; el.innerHTML = '<i class="dot"></i>Not configured'; return; }
-  el.className = "wachip"; el.innerHTML = '<i class="dot"></i>Checking…';
-  try {
-    const j = await waCall("/sessions/" + encodeURIComponent(WA.cfg.session));
-    const st = (j && j.status) || (j && j.data && j.data.status) || "";
-    const ph = (j && j.phone) || (j && j.data && j.data.phone) || "";
-    if (st === "ready") { el.className = "wachip ok"; el.innerHTML = '<i class="dot"></i>WhatsApp connected' + (ph ? ' · <small>' + esc(ph) + '</small>' : ""); }
-    else {
-      el.className = "wachip " + (st === "qr_ready" ? "warn" : "bad");
-      el.innerHTML = '<i class="dot"></i>' + esc(WA_ST_LABEL[st] || st || "Unknown") + ' <button class="btn" onclick="waQrModal()">Connect</button>';
-    }
-  } catch (e) { el.className = "wachip bad"; el.innerHTML = '<i class="dot"></i>Gateway offline <small>' + esc(e.message) + '</small>'; }
+const waMediaType = (t) => ({ image: "Photo", video: "Video", audio: "Audio", voice: "Voice message", document: "Document", sticker: "Sticker", location: "Location", contact: "Contact card", poll: "Poll", call: "Call", revoked: "Deleted message", order: "Order", product: "Product" }[t] || "");
+const waLinkify = (t) => esc(t).replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>').replace(/\n/g, "<br>");
+function waTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts * 1000), n = new Date();
+  if (d.toDateString() === n.toDateString()) return t12(d.getHours() + ":" + String(d.getMinutes()).padStart(2, "0"));
+  const y = new Date(n); y.setDate(n.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return "Yesterday";
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short" }) + (d.getFullYear() !== n.getFullYear() ? " " + d.getFullYear() : "");
+}
+function waDay(ts) {
+  const d = new Date(ts * 1000), n = new Date();
+  if (d.toDateString() === n.toDateString()) return "TODAY";
+  const y = new Date(n); y.setDate(n.getDate() - 1);
+  if (d.toDateString() === y.toDateString()) return "YESTERDAY";
+  return d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }).toUpperCase();
+}
+function waTicks(status) {
+  if (status === "failed") return '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#e54242" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="9" stroke-width="1.8"/><path d="M12 7.5v5.5M12 16.5h.01"/></svg>';
+  if (status === "pending") return waI("clock", 14);
+  const col = status === "read" ? "#53bdeb" : "currentColor";
+  const dbl = status === "delivered" || status === "read";
+  return `<svg viewBox="0 0 28 20" width="17" height="13" fill="none" stroke="${col}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 11.5l4.2 4.5L15.5 5"/>${dbl ? '<path d="M10.5 11.5l4.2 4.5L24 5.5"/>' : ""}</svg>`;
 }
 
-/* ----- navigation ----- */
-function waTab(t) { WA.tab = t; vWa(); }
-function waOpenStudent(id) { WA.stu = id; WA.tab = "individual"; go("wa"); }
-
-/* ----- view ----- */
+/* ----- page painting + height fitting ----- */
+function waFit() {
+  const app = $("#waApp"); if (!app) return;
+  const r = app.getBoundingClientRect();
+  app.style.height = Math.max(420, window.innerHeight - r.top - 12) + "px";
+}
 function vWa() {
-  const tabs = [["individual", "Individual"], ["batch", "Class / Batch"], ["everyone", "Everyone"], ["history", "History"]];
-  $("#view").innerHTML = `
-  <div class="glass tools wastools">
-   <span class="wachip" id="wa_conn"></span>
-   <span class="grow"></span>
-   <button class="btn" onclick="waSettings()">WhatsApp settings</button>
-  </div>
-  ${!waReady() && !WA.run ? '<div class="warnbox" style="margin-top:12px">WhatsApp is not connected yet. Open <b>WhatsApp settings</b>, point it at your OpenWA gateway, choose a session and link the phone by QR code.</div>' : ""}
-  ${WA.run ? waProgressHtml() : `
-  <div class="glass tools" style="margin-top:12px">
-   <div class="tabs">${tabs.map(([k, l]) => `<button class="${WA.tab === k ? "on" : ""}" onclick="waTab('${k}')">${l}</button>`).join("")}</div>
-  </div>
-  <div id="wa_body" style="margin-top:12px">${waTabBody()}</div>`}`;
-  if (!WA.run) waCheckConn();
-  if (WA.tab === "individual") waIndBind();
-  else if (WA.tab === "history") { const el = $("#wa_lq"); if (el) el.oninput = (e) => { WA.lq = e.target.value; const tb = $("#wa_ltb"); if (tb) tb.innerHTML = waLogRows(); }; }
-  else waRefreshInfo();
+  const v = $("#view");
+  v.innerHTML = '<div id="waApp" style="padding:9px"><div class="waAppIn" id="waAppIn"><div class="waBoot"><div class="ring"></div></div></div></div>';
+  waFit();
+  waPaint();
 }
-function waTabBody() {
-  if (WA.tab === "history") return waHistoryHtml();
-  if (WA.tab === "individual") return `
-  <div class="wacard glass">
-   <div style="position:relative"><input class="in" id="wa_q" placeholder="Search a student by name, ID, class or phone" autocomplete="off"><div class="wasug glass" id="wa_sug"></div></div>
-   <div id="wa_ind">${waIndCard()}</div>
-  </div>
-  ${waComposer()}
-  <div class="waact"><button class="btn p" id="wa_send1" onclick="waSendInd()">Send now</button></div>`;
-  if (WA.tab === "batch") {
-    if (!DB.Batches.length) return `<div class="glass pad empty">Create a class and batch first, then you can message a whole batch.<br><br><button class="btn p" onclick="editBatch()">Add Class/Batch</button></div>`;
-    const used = CLASSES.filter((c) => DB.Batches.some((b) => b.class === c));
-    const B = sortBatches(DB.Batches).filter((b) => !WA.cls || b.class === WA.cls);
-    return `
-  <div class="wacard glass">
-   <select class="in" id="wa_bc" onchange="waPickCls(this.value)">
-    <option value="">Select class</option>
-    ${used.map((c) => `<option value="${esc(c)}" ${WA.cls === c ? "selected" : ""}>${esc(clsLabel(c))}</option>`).join("")}
-   </select>
-   <select class="in" id="wa_bb" onchange="WA.bat=this.value;waRefreshInfo()" ${WA.cls ? "" : "disabled"}>
-    <option value="">All batches in this class</option>
-    ${B.map((b) => `<option value="${esc(b.id)}" ${WA.bat === b.id ? "selected" : ""}>${esc(bLabel(b))}</option>`).join("")}
-   </select>
-   <label class="chk"><input type="checkbox" ${WA.incAll ? "checked" : ""} onchange="WA.incAll=this.checked;waRefreshInfo()"><span>Include Inactive, Suspended and Left students</span></label>
-   <div class="wainfo" id="wa_info"></div>
-   <div class="wasee" id="wa_see"></div>
-  </div>
-  ${waComposer()}
-  <div class="waact"><button class="btn p" onclick="waConfirm()">Review &amp; send…</button></div>`;
+if (!window._waFitHook) { window._waFitHook = true; window.addEventListener("resize", () => { if (route !== "wa") return; waFit(); const bk = $("#waBack"); if (bk) bk.style.display = innerWidth <= 860 ? "" : "none"; }); }
+async function waPaint() {
+  const box = $("#waAppIn"); if (!box || route !== "wa") return;
+  if (waReady() && !WA.conn.st) { await waEnsureConn(); if ($("#waAppIn") !== box) return; }
+  if (!WA.cfg.url || !WA.cfg.key) { box.innerHTML = waPairHtml("form"); return; }
+  if (!WA.cfg.session) { box.innerHTML = waPairHtml("pick"); waPairPickInit(); return; }
+  if (WA.conn.st === "ready") {
+    box.innerHTML = waShellHtml();
+    waDrawList(); waDrawConv(); waConnPill();
+    waFetchChats().catch(() => {});
+    if (WA.chat && WA.chat !== "__run") { const id = WA.chat; WA.chat = ""; waOpenChat(id); }
+    waTickStart();
+    return;
   }
-  if (!DB.Students.length) return `<div class="glass pad empty">No students yet. Add or import students first.</div>`;
-  return `
-  <div class="wacard glass">
-   <label class="chk"><input type="checkbox" ${WA.incAll ? "checked" : ""} onchange="WA.incAll=this.checked;waRefreshInfo()"><span>Include Inactive, Suspended and Left students</span></label>
-   <div class="wainfo" id="wa_info"></div>
-   <div class="wasee" id="wa_see"></div>
-  </div>
-  ${waComposer()}
-  <div class="waact"><button class="btn p" onclick="waConfirm()">Review &amp; send…</button></div>`;
+  if (WA.conn.st === "offline") { box.innerHTML = waPairHtml("offline"); return; }
+  box.innerHTML = waPairHtml("qr");
+  waPairPoll();
 }
-function waPickCls(c) { WA.cls = c; WA.bat = ""; vWa(); }
-
-/* ----- recipients + info ----- */
-function waList() {
-  let L;
-  if (WA.tab === "individual") { const s = DB.Students.find((x) => x.id === WA.stu); L = s ? [s] : []; }
-  else if (WA.tab === "batch") {
-    if (!WA.cls) L = [];
-    else if (WA.bat) L = DB.Students.filter((s) => s.batchId === WA.bat);
-    else L = DB.Students.filter((s) => { const b = batchOf(s); return b && b.class === WA.cls; });
-  } else L = DB.Students.slice();
-  return WA.tab === "individual" ? L : L.filter((s) => WA.incAll || s.status === "Active");
-}
-function waStats(L) {
-  const ok = L.filter((s) => waPhone(s.phone));
-  return { n: L.length, noPhone: L.length - ok.length, dups: ok.length - new Set(ok.map((s) => waPhone(s.phone))).size };
-}
-function waRefreshInfo() {
-  const el = $("#wa_info"); if (!el) return;
-  const L = waList(), st = waStats(L);
-  if (WA.tab === "batch" && !WA.cls) { el.textContent = "Choose a class to pick recipients."; const see = $("#wa_see"); if (see) see.innerHTML = ""; return; }
-  el.innerHTML = `Sending to <b>${st.n - st.noPhone}</b> of ${st.n} selected` +
-    (st.noPhone ? ` · <span style="color:var(--warn)">${st.noPhone} without a phone</span>` : "") +
-    (st.dups ? ` · ${st.dups} duplicate number${st.dups > 1 ? "s" : ""}` : "");
-  const see = $("#wa_see");
-  if (see) {
-    see.innerHTML = L.slice(0, 120).map((s) => `<span class="wasee-i${waPhone(s.phone) ? "" : " off"}">${esc(s.name)}<small>${esc(s.phone || "no phone")}</small></span>`).join("") +
-      (L.length > 120 ? `<span class="wasee-i off">+${L.length - 120} more…</span>` : "") ||
-      '<span class="mut" style="font-size:12.5px">No recipients — choose a class or batch above.</span>';
-  }
-}
-
-/* ----- individual tab ----- */
-function waIndBind() {
-  const q = $("#wa_q"); if (!q) return;
-  const sug = $("#wa_sug");
-  const draw = () => {
-    const v = (q.value || "").trim().toLowerCase();
-    if (!v) { sug.classList.remove("on"); sug.innerHTML = ""; return; }
-    const L = DB.Students.filter((s) => [s.name, s.sid, s.phone, s.guardian, s.school].join(" ").toLowerCase().includes(v)).slice(0, 8);
-    sug.innerHTML = L.length ? L.map((s) => `<div class="wasug-i" onclick="waPickStu('${s.id}')"><b>${esc(s.name)}</b><small>${esc(s.sid)} · ${esc(s.phone || "no phone")}</small></div>`).join("") : '<div class="wasug-i"><small>No students match</small></div>';
-    sug.classList.add("on");
-  };
-  q.oninput = draw;
-  q.onfocus = draw;
-  if (!window._waSugHook) {
-    window._waSugHook = true;
-    document.addEventListener("click", (e) => { const s = $("#wa_sug"); if (s && !e.target.closest(".wasug") && e.target.id !== "wa_q") s.classList.remove("on"); });
-  }
-}
-function waPickStu(id) {
-  WA.stu = id;
-  const sug = $("#wa_sug"); if (sug) { sug.classList.remove("on"); sug.innerHTML = ""; }
-  const q = $("#wa_q"); if (q) q.value = "";
-  const el = $("#wa_ind"); if (el) el.innerHTML = waIndCard();
-}
-function waIndCard() {
-  const s = DB.Students.find((x) => x.id === WA.stu);
-  if (!s) return '<div class="mut" style="font-size:13px;padding:8px 2px">Pick a student above, or use the WhatsApp button on any student row in the Students page.</div>';
-  const b = batchOf(s);
-  return `<div class="waone">
-   <div class="avx">${init(s.name)}</div>
-   <div class="ai"><b>${esc(s.name)}</b><small>${esc(s.sid)}${b ? " · " + esc(bLabel(b)) : ""}${s.guardian ? " · Guardian: " + esc(s.guardian) : ""}</small></div>
-   <span class="chip s-${esc(s.status)}">${esc(s.status)}</span>
-  </div>
-  ${waPhone(s.phone) ? "" : '<div class="warnbox" style="margin-top:8px">No valid phone number on this student — add one in the student form (e.g. 01712345678).</div>'}`;
-}
-async function waSendInd() {
-  const s = DB.Students.find((x) => x.id === WA.stu);
-  if (!s) { toast("Pick a student first"); return; }
-  const msg = String(WA.msg || "").trim();
-  if (!msg && !WA.file) { toast("Type a message or attach a file"); return; }
-  if (!WA.file && msg.length > 4096) { toast("WhatsApp messages are limited to 4096 characters"); return; }
-  if (!waReady()) { waSettings(); return; }
-  if (!waPhone(s.phone)) { toast("This student has no valid phone number"); return; }
-  const btn = $("#wa_send1");
-  if (btn) { btn.disabled = true; btn.textContent = "Sending…"; }
-  const kind = WA.file ? waMediaKind(WA.file.mimetype).replace("send-", "") : "text";
+/* status check — polls the session while the page is open (tick engine below) */
+async function waEnsureConn() {
+  if (!waReady()) return;
+  const prev = WA.conn.st;
   try {
-    await waSendOne(s, waFill(msg, s), WA.file);
-    waLogAdd(s, kind, true, "", "Individual");
-    toast("Message sent to " + s.name);
-  } catch (e) {
-    waLogAdd(s, kind, false, e.message, "Individual");
-    toast("Not sent: " + e.message);
-  }
-  if (btn) { btn.disabled = false; btn.textContent = "Send now"; }
+    const j = await waCall("/sessions/" + waSid());
+    const st = (j && j.status) || "";
+    WA.conn = { st, phone: (j && j.phone) || "", push: (j && j.pushName) || "" };
+  } catch (e) { WA.conn = { st: "offline", phone: "", push: "", err: e.message || "Gateway unreachable" }; }
+  if (route !== "wa") return;
+  if (!prev || prev !== WA.conn.st) waPaint();
+  else waConnPill();
+}
+function waConnPill() {
+  const el = $("#waConnPill"); if (!el) return;
+  const c = WA.conn;
+  if (c.st === "ready") { el.className = "waPill ok"; el.innerHTML = '<i class="dot"></i>' + esc(c.push || (c.phone ? "+" + c.phone : "online")); }
+  else if (c.st === "offline") { el.className = "waPill bad"; el.innerHTML = '<i class="dot"></i>gateway unreachable'; }
+  else { el.className = "waPill warn"; el.innerHTML = '<i class="dot"></i>' + esc(WA_ST_LABEL[c.st] || "checking…"); }
 }
 
-/* ----- composer ----- */
-function waComposer() {
-  return `<div class="wacomp glass">
-   <label class="lbl">Message</label>
-   <textarea class="in" id="wa_msg" rows="5" placeholder="Type the message to send… Use {name}, {sid}, {class}, {batch}, {guardian} or {school} — filled per student." oninput="WA.msg=this.value">${esc(WA.msg || "")}</textarea>
-   <div class="wafill">${WA_VARS.map((v) => `<button class="btn" onclick="waIns('{${v}}')">{${v}}</button>`).join("")}</div>
-   <div class="wafile" id="wa_filebox">${waFileBox()}</div>
-   <input type="file" id="wa_file" hidden onchange="waReadFile(event)">
-   <p class="mut" id="wa_hint" style="font-size:12px;margin:6px 2px 0">${WA.file ? "The attached file goes to every selected student." : "Attach an image, video, audio or document to send it with the message."}</p>
+/* ----- pairing / QR screen (web.whatsapp.com look) ----- */
+function waPairHtml(mode) {
+  const step = (n, t, s) => `<div class="waStep"><i>${n}</i><div>${t}${s ? "<small>" + s + "</small>" : ""}</div></div>`;
+  let right = "";
+  if (mode === "form") {
+    right = `<form class="waForm" onsubmit="waPairConnect(event)">
+     <label>OpenWA gateway URL<input class="in" id="wa_u" placeholder="https://wa.yourdomain.com" value="${esc(WA.cfg.url)}" autocomplete="off"></label>
+     <label>API key<input class="in" id="wa_k" type="password" placeholder="owa_…" value="${esc(WA.cfg.key)}" autocomplete="off"></label>
+     <div class="mut" style="font-size:12px;line-height:1.5;color:#8aa0ad">Your gateway URL and API key are stored only in this browser. Use an HTTPS gateway — this page is served over HTTPS and browsers block plain-HTTP gateway calls. See the setup guide for a Caddy/Nginx reverse proxy.</div>
+     <div id="wa_pst" class="waPairSt"></div>
+     <button class="waGo" style="justify-content:center" type="submit">Connect gateway</button>
+    </form>`;
+  } else if (mode === "pick") {
+    right = `<div class="waForm">
+     <label>WhatsApp session<span style="display:flex;gap:8px;margin-top:5px"><select class="in" id="wa_psess" style="flex:1" onchange="waPairPickSave()"><option value="">Loading sessions…</option></select></span></label>
+     <div id="wa_pst" class="waPairSt"></div>
+     <div class="waFormRow">
+      <button class="waGo" style="justify-content:center;background:#fff;color:#008069;border:1px solid #cfe8df" type="button" onclick="waPairNewSess()">New session</button>
+      <button class="waGo" style="justify-content:center" type="button" onclick="waPairGo()">Continue</button>
+     </div>
+     <button class="btn" style="align-self:center" onclick="waPairBack()">← Change gateway</button>
+    </div>`;
+  } else if (mode === "offline") {
+    right = `<div class="waForm" style="align-items:center;text-align:center;gap:10px">
+     <div style="width:62px;height:62px;border-radius:50%;background:#fde3e3;color:#a03030;display:flex;align-items:center;justify-content:center">${waI("x", 28)}</div>
+     <b style="font-size:17px;color:#243f4d">Could not reach the WhatsApp session</b>
+     <div class="waPairSt bad">${esc(WA.conn.err || "The gateway is unreachable, or the session no longer exists.")}</div>
+     <div class="waFormRow" style="width:100%;margin-top:6px">
+      <button class="waGo" style="justify-content:center;background:#fff;color:#008069;border:1px solid #cfe8df" onclick="waEnsureConn()">Try again</button>
+      <button class="waGo" style="justify-content:center" onclick="waPairBack()">Pick a session</button>
+     </div>
+     <button class="btn" style="align-self:center" onclick="waSettings()">Gateway settings</button>
+    </div>`;
+  } else {
+    right = `<div class="waQrBox" id="waQrA"><div class="wasp"><div class="ring"></div></div></div>
+     <div class="waPairSt" id="wa_pst">Starting the session…</div>
+     <div class="waPairLinks"><button onclick="waEnsureConn()">Refresh</button><button onclick="waPairBack()">Change session</button><button onclick="waSettings()">Gateway settings</button></div>`;
+  }
+  return `<div class="waPair" style="padding:9px">
+   <div class="waPairCard">
+    <div class="waPairL">
+     <h2>Use WhatsApp in TuitionPro<br>with your own number</h2>
+     <p>Message students, guardians and groups from the same window where you manage your tuition — and broadcast to a whole batch in one go.</p>
+     ${mode === "form" ? step(1, "Enter your OpenWA gateway", "The self-hosted WhatsApp gateway you installed from the setup guide") + step(2, "Link your phone by QR code", "WhatsApp → Settings → Linked devices → Link a device") + step(3, "Start chatting", "Chats, replies and broadcasts all appear here") : mode === "offline" ? step(1, "Check the gateway", "Is the OpenWA server running and reachable at your URL?") + step(2, "Check the session", "The linked session may have been deleted, or the API key was rejected") + step(3, "Reconnect", "Pick a session again and scan the QR code") : step(1, "Open WhatsApp on your phone", "") + step(2, "Go to <b>Settings → Linked devices → Link a device</b>", "") + step(3, "Point your phone at the QR code on the right", "The QR code refreshes by itself — keep this window open")}
+     <div class="waPairNote">TuitionPro talks to WhatsApp through <b>your own OpenWA gateway</b> — messages go directly from your gateway to WhatsApp, nothing passes through any third party. The linked device stays connected until you log it out on the phone.</div>
+    </div>
+    <div class="waPairR">${right}</div>
+   </div>
+   <div class="waPairFoot">Self-hosted with OpenWA · WhatsApp is a trademark of Meta Platforms, Inc.</div>
   </div>`;
 }
-function waFileBox() {
-  if (!WA.file) return '<button class="btn" onclick="$(\'#wa_file\').click()">Attach file</button>';
-  return `<span class="chip">${esc(WA.file.filename)} <small>${(WA.file.size / 1048576).toFixed(1)} MB</small></span><button class="btn d" onclick="waDelFile()">Remove</button>`;
+async function waPairConnect(e) {
+  e.preventDefault();
+  WA.cfg.url = $("#wa_u").value.trim().replace(/\/+$/, "");
+  WA.cfg.key = $("#wa_k").value.trim();
+  const st = $("#wa_pst");
+  if (!WA.cfg.url || !WA.cfg.key) { st.className = "waPairSt bad"; st.textContent = "Enter both the gateway URL and the API key."; return; }
+  st.textContent = "Connecting to the gateway…";
+  try {
+    const L = waListResp(await waCall("/sessions"));
+    WA.sess = L;
+    waSaveCfg();
+    WA.conn = { st: "", phone: "", push: "" };
+    waPaint();
+  } catch (err) { st.className = "waPairSt bad"; st.textContent = err.message + (err.status === 401 ? " Check the API key." : ""); }
 }
-function waRefreshFile() {
-  const fb = $("#wa_filebox"); if (fb) fb.innerHTML = waFileBox();
-  const h = $("#wa_hint"); if (h) h.textContent = WA.file ? "The attached file goes to every selected student." : "Attach an image, video, audio or document to send it with the message.";
+async function waPairPickInit() {
+  const sel = $("#wa_psess"); if (!sel) return;
+  try {
+    if (!WA.sess.length) WA.sess = waListResp(await waCall("/sessions"));
+    sel.innerHTML = '<option value="">Select a session</option>' + WA.sess.map((s) => `<option value="${esc(s.id)}" ${s.id === WA.cfg.session ? "selected" : ""}>${esc(s.name || s.id)}${s.status === "ready" ? " · connected" + (s.phone ? " (+" + s.phone + ")" : "") : ""}</option>`).join("") + '<option value="__new">+ Create a new session…</option>';
+    if (WA.cfg.session) { waPairGo(); return; }
+    $("#wa_pst").textContent = "Pick the WhatsApp session to link, then continue.";
+  } catch (e) { $("#wa_pst").className = "waPairSt bad"; $("#wa_pst").textContent = e.message; }
+}
+function waPairPickSave() {
+  const v = $("#wa_psess").value;
+  if (v === "__new") { waPairNewSess(); return; }
+  WA.cfg.session = v; waSaveCfg();
+  $("#wa_pst").textContent = v ? "Session selected — press Continue to link the phone." : "Pick the WhatsApp session to link, then continue.";
+}
+async function waPairNewSess() {
+  const name = prompt("Name for the new WhatsApp session", "tuitionpro");
+  if (!name) { const s = $("#wa_psess"); if (s) s.value = WA.cfg.session || ""; return; }
+  const st = $("#wa_pst"); if (st) { st.className = "waPairSt"; st.textContent = "Creating session…"; }
+  try {
+    const j = await waCall("/sessions", { method: "POST", body: JSON.stringify({ name }) });
+    WA.cfg.session = (j && j.id) || "";
+    waSaveCfg();
+    WA.conn = { st: "", phone: "", push: "" };
+    waPaint();
+  } catch (e) { if (st) { st.className = "waPairSt bad"; st.textContent = e.message; } }
+}
+function waPairGo() { if (!WA.cfg.session) { toast("Select a session first"); return; } WA.conn = { st: "", phone: "", push: "" }; waSaveCfg(); waPaint(); }
+function waPairBack() { WA.cfg.session = ""; WA.conn = { st: "", phone: "", push: "" }; waSaveCfg(); waPaint(); }
+async function waPairPoll() {
+  const box = $("#waQrA"); if (!box) return; // screen replaced — stop polling
+  const st = $("#wa_pst");
+  try {
+    const j = await waCall("/sessions/" + waSid());
+    const s = (j && j.status) || "";
+    if (s === "ready") { WA.conn = { st: "ready", phone: (j && j.phone) || "", push: (j && j.pushName) || "" }; waPaint(); return; }
+    if (["created", "disconnected", "failed"].includes(s)) await waCall("/sessions/" + waSid() + "/start", { method: "POST" }).catch(() => {});
+    if (st) { st.className = "waPairSt"; st.textContent = s === "authenticating" ? "Checking the code with WhatsApp…" : WA_ST_LABEL[s] || "Waiting…"; }
+    const q = await waCall("/sessions/" + waSid() + "/qr").catch(() => null);
+    const data = (q && (q.qrCode || (q.data && q.data.qrCode) || q.qr || q.qrcode)) || "";
+    if (data.startsWith("data:image")) box.innerHTML = `<img src="${data}" alt="WhatsApp QR code">`;
+    else if (data) {
+      await lib("qr");
+      const b2 = $("#waQrA");
+      if (b2 && window.QRCode) { b2.innerHTML = ""; new QRCode(b2, { text: data, width: 240, height: 240, correctLevel: QRCode.CorrectLevel.M }); }
+    } else box.innerHTML = `<div class="wasp"><div class="ring"></div></div>`;
+  } catch (e) {
+    if (st) { st.className = "waPairSt bad"; st.textContent = e.message; }
+    box.innerHTML = "";
+  }
+  setTimeout(waPairPoll, 2500);
+}
+
+/* ----- main shell (chat list + conversation) ----- */
+function waShellHtml() {
+  const me = WA.conn.push || (WA.conn.phone ? "+" + WA.conn.phone : "WhatsApp");
+  return `<div class="waShell" id="waShell">
+   <aside class="waL" id="waL">
+    <header class="waLh">
+     <div class="waMe" onclick="waSettings()" title="WhatsApp settings"><div class="waAv sm" style="background:${waAvColor(ME.name)}">${init(ME.name || me)}</div><div style="min-width:0"><b>${esc(me)}</b><span class="waPill" id="waConnPill"><i class="dot"></i>online</span></div></div>
+     <span style="display:flex;gap:2px;align-items:center">
+      ${WA.run && !WA.run.done ? '<button class="waRunTag" onclick="waViewRun()">' + waI("bc", 14) + ' Broadcast</button>' : ""}
+      <button class="waHb" title="New chat" onclick="waNewChatOpen()">${waI("pencil")}</button>
+      <button class="waHb" title="New broadcast" onclick="waBcOpen()">${waI("bc")}</button>
+      <button class="waHb" title="Sent history" onclick="waLogModal()">${waI("clock")}</button>
+      <button class="waHb" title="Settings" onclick="waSettings()">${waI("gear")}</button>
+     </span>
+    </header>
+    <div class="waSearch"><div class="wsi">${waI("search", 17)}<input id="waQ" placeholder="Search or start a new chat" value="${esc(WA.q)}" oninput="WA.q=this.value;waDrawList()"></div></div>
+    <div class="waChips" id="waChips"></div>
+    <div class="waList" id="waList"></div>
+   </aside>
+   <main class="waR" id="waR"></main>
+  </div>`;
+}
+function waChatsVis() {
+  let L = WA.chats.filter((c) => c.kind !== "status" && c.kind !== "unknown");
+  const q = String(WA.q || "").trim().toLowerCase();
+  if (q) L = L.filter((c) => [waChatLabel(c), c.id, c.phone || "", (waStuForChat(c.id) || {}).sid].join(" ").toLowerCase().includes(q));
+  if (WA.filt === "unread") L = L.filter((c) => (c.unreadCount || 0) > 0);
+  if (WA.filt === "students") L = L.filter((c) => waStuForChat(c.id));
+  if (WA.filt === "groups") L = L.filter((c) => c.kind === "group");
+  return L.sort((a, b) => ((b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)) || ((b.timestamp || 0) - (a.timestamp || 0)));
+}
+function waChatLabel(c) {
+  const s = waStuForChat(c.id);
+  if (s) return s.name;
+  return c.name || (c.phone ? "+" + c.phone : "") || waDigits(c.id) || c.id || "Unknown";
+}
+function waChatSub(c) {
+  const s = waStuForChat(c.id);
+  if (s) {
+    const b = batchOf(s);
+    return (s.sid ? esc(s.sid) + " · " : "") + (b ? esc(bLabel(b)) + " · " : "") + esc(s.status || "");
+  }
+  if (c.kind === "group") return "Group";
+  return c.phone ? "+" + esc(c.phone) : esc(waDigits(c.id) || "");
+}
+function waRowHtml(c) {
+  const s = waStuForChat(c.id);
+  const name = waChatLabel(c);
+  const lm = c.lastMessage || waMediaType(c.lastMessageType) || "";
+  const you = lm && c.lastMessageType && ["image", "video", "audio", "voice", "document", "sticker"].includes(c.lastMessageType) && !c.lastMessage;
+  const prev = (you ? "" : "") + lm;
+  const un = c.unreadCount || 0;
+  return `<div class="waRow${WA.chat === c.id ? " on" : ""}" onclick="waOpenChat('${esc(c.id)}')">
+   <div class="waAv" style="background:${waAvColor(name)}">${init(name)}</div>
+   <div class="waRowM">
+    <div class="waRowT"><b>${esc(name)}${c.pinned ? " " + waI("pin", 13) : ""}</b><span>${waTime(c.timestamp)}</span></div>
+    <div class="waRowP">${prev ? '<span class="pv">' + esc(prev) + "</span>" : '<span class="pv" style="color:#8aa0ad">' + esc(waChatSub(c)) + "</span>"}${un ? `<span class="waUn">${un > 99 ? "99+" : un}</span>` : ""}</div>
+   </div>
+  </div>`;
+}
+function waDrawChips() {
+  const el = $("#waChips"); if (!el) return;
+  const all = WA.chats.filter((c) => c.kind !== "status" && c.kind !== "unknown");
+  const opts = [["all", "All", all.length], ["unread", "Unread", all.filter((c) => (c.unreadCount || 0) > 0).length], ["students", "Students", all.filter((c) => waStuForChat(c.id)).length], ["groups", "Groups", all.filter((c) => c.kind === "group").length]];
+  el.innerHTML = opts.map(([k, l, n]) => `<button class="waChip${WA.filt === k ? " on" : ""}" onclick="WA.filt='${k}';waDrawList()">${l}${n ? " " + n : ""}</button>`).join("");
+}
+function waDrawList() {
+  const el = $("#waList"); if (!el) return;
+  if (WA.bc) { el.innerHTML = waBcHtml(); waBcRefresh(); return; }
+  if (WA.newChat) { el.innerHTML = waPickerHtml(); return; }
+  waDrawChips();
+  const L = waChatsVis();
+  el.innerHTML = L.length ? L.map(waRowHtml).join("") :
+    `<div class="waListEmpty">${waI("chatbig", 44)}<br><b>No chats yet</b><br>Once someone messages this number, the chat appears here.<br>You can start one now: tap the pencil icon above and pick a student.</div>`;
+}
+function waNewChatOpen() { WA.newChat = true; WA.bc = null; waDrawList(); const q = $("#waPq"); if (q) q.focus(); }
+function waPickerHtml() {
+  const q = String(WA._pq || "").trim().toLowerCase();
+  let L = DB.Students.filter((s) => waPhone(s.phone));
+  if (q) L = L.filter((s) => [s.name, s.sid, s.phone, s.guardian, s.school].join(" ").toLowerCase().includes(q));
+  L.sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  return `<div class="waPickerH"><button class="waHb" onclick="WA.newChat=false;waDrawList()">${waI("back")}</button><b>New chat</b></div>
+  <div class="waSearch"><div class="wsi">${waI("search", 17)}<input id="waPq" placeholder="Search students by name, ID or phone" value="${esc(WA._pq || "")}" oninput="WA._pq=this.value;waDrawList()"></div></div>
+  <div class="waList" style="flex:1">
+   ${L.length ? '<div class="waSecLbl">TuitionPro students with a phone number</div>' + L.map((s) => `<div class="waPickRow" onclick="waOpenStu('${s.id}')"><div class="waAv sm" style="background:${waAvColor(s.name)}">${init(s.name)}</div><div class="waPickM"><b>${esc(s.name)}</b><small>${esc(s.phone)}${s.guardian ? " · " + esc(s.guardian) : ""}</small></div><span class="waTag s-${esc(s.status)}">${esc(s.status)}</span></div>`).join("") : '<div class="waListEmpty">No students match' + (WA._pq ? "" : " — or none has a phone number yet") + '.</div>'}
+  </div>`;
+}
+async function waOpenStu(id) {
+  const s = DB.Students.find((x) => x.id === id);
+  if (!s) return;
+  const chatId = waPhone(s.phone);
+  if (!chatId) { toast("This student has no valid phone number"); return; }
+  if (!WA.chats.some((c) => c.id === chatId)) WA.chats.unshift({ id: chatId, name: s.name, kind: "individual", isGroup: false, unreadCount: 0, timestamp: Math.floor(Date.now() / 1000), archived: false, pinned: false, muted: false });
+  WA.newChat = false;
+  waOpenChat(chatId);
+}
+
+/* ----- conversation ----- */
+function waConvHeadHtml() {
+  if (WA.chat === "__run") return `<div class="waRunH" id="waRunH"></div>`;
+  const c = WA.chats.find((x) => x.id === WA.chat) || { id: WA.chat, name: "", kind: "individual" };
+  const s = waStuForChat(WA.chat);
+  const name = s ? s.name : (c.name || waDigits(WA.chat) || "Chat");
+  const sub = s ? (s.sid ? esc(s.sid) + " · " : "") + (batchOf(s) ? esc(bLabel(batchOf(s))) + " · " : "") + esc(s.status || "") : (c.kind === "group" ? "Group" : "+" + waDigits(WA.chat));
+  return `<div class="waConvH">
+   <button class="waHb" title="Back" onclick="waBackToList()" style="display:none" id="waBack">${waI("back")}</button>
+   <div class="waAv sm" style="background:${waAvColor(name)}">${init(name)}</div>
+   <div class="nm" onclick="waRefreshChat()" title="Refresh this chat"><b>${esc(name)}</b><small>${sub}</small></div>
+   <button class="waHb" title="Refresh messages" onclick="waRefreshChat()">${waI("refresh")}</button>
+  </div>`;
+}
+function waBackToList() { WA.chat = ""; WA.msgs[WA.chat] = null; waDrawConv(); waDrawList(); if ($("#waApp")) $("#waApp").classList.remove("wapm"); }
+async function waRefreshChat() { if (WA.chat && WA.chat !== "__run") { await waFetchMsgs(WA.chat); waMarkRead(WA.chat); } }
+function waCompHtml() {
+  const draft = WA.drafts[WA.chat] || "";
+  return `<div id="waFileRow" style="padding:0 12px;background:#f0f2f5;flex:none">${WA.file ? waFileChipHtml() : ""}</div>
+  <div class="waComp">
+   <div class="waAttachM" id="waAM">
+    <button onclick="waPickFile('media')">Photos &amp; videos</button>
+    <button onclick="waPickFile('audio')">Audio</button>
+    <button onclick="waPickFile('doc')">Document</button>
+   </div>
+   <button class="waHb" style="width:40px;height:40px" title="Attach" onclick="waToggleAttach()">${waI("clip", 21)}</button>
+   <div class="waCompTx"><textarea id="waTx" rows="1" placeholder="Type a message" oninput="waTxInput(this)" onkeydown="waTxKey(event)">${esc(draft)}</textarea></div>
+   <button class="waSendB${draft || WA.file ? "" : " dim"}" title="Send" onclick="waChatSend()">${waI("send", 21)}</button>
+   <input type="file" id="wa_cf" hidden onchange="waReadFile(event)">
+  </div>
+  <div class="waCompHint">Enter sends · Shift+Enter adds a new line · attachments up to 45 MB</div>`;
+}
+function waEmptyHtml() {
+  return `<div class="waEmpty">
+   <div class="big">${waI("chatbig", 74)}</div>
+   <h3>WhatsApp for TuitionPro</h3>
+   <p>Send and receive WhatsApp messages with students, guardians and groups — from the same window where you run your tuition.</p>
+   <div class="tips">
+    <b>Pick a chat</b> on the left — every conversation on your number appears here.<br>
+    <b>Pencil icon</b> — start a new chat with any student in your list.<br>
+    <b>Megaphone icon</b> — broadcast to a whole class, batch or everyone, one message at a time.
+   </div>
+  </div>`;
+}
+function waDrawConv() {
+  const r = $("#waR"); if (!r) return;
+  if (WA.chat === "__run") { r.innerHTML = waRunPanelHtml(); waDrawRunPanel(); const bk = $("#waBack"); if (bk && innerWidth <= 860) bk.style.display = ""; return; }
+  if (!WA.chat) { r.innerHTML = waEmptyHtml(); return; }
+  r.innerHTML = waConvHeadHtml() + `<div class="waMsgs" id="waMsgs"></div>` + waCompHtml();
+  if (innerWidth <= 860) $("#waBack").style.display = "";
+  waDrawMsgs(true);
+  const tx = $("#waTx"); if (tx) { tx.value = WA.drafts[WA.chat] || ""; setTimeout(() => tx.focus(), 60); }
+}
+function waBubblesHtml(msgs) {
+  let day = "", out = "";
+  (msgs || []).forEach((m) => {
+    const ts = m.timestamp || Math.floor(new Date(m.createdAt || Date.now()).getTime() / 1000);
+    const d = ts ? waDay(ts) : "";
+    if (d && d !== day) { out += `<div class="waDay">${d}</div>`; day = d; }
+    out += waBubbleHtml(m, ts);
+  });
+  const S = WA.send[WA.chat];
+  if (S) out += waBubbleHtml({ id: S.key, direction: "outgoing", body: S.body, type: S.kind, timestamp: S.ts, status: S.fail ? "failed" : "pending" }, S.ts);
+  return out || '<div class="waLoad">No messages yet — say hello below.</div>';
+}
+function waBubbleHtml(m, ts) {
+  if (m.type === "revoked") return `<div class="waB sys">This message was deleted</div>`;
+  const out = m.direction === "outgoing";
+  let inner = "", author = "";
+  if (m.author && m.chatId && m.chatId.includes("@g.us")) {
+    const as = waStuForChat(m.author);
+    author = `<div class="waAuthor">${esc(as ? as.name : waDigits(m.author) || "member")}</div>`;
+  }
+  const mediaTypes = ["image", "video", "audio", "voice", "document", "sticker"];
+  if (mediaTypes.includes(m.type)) {
+    const lbl = waMediaType(m.type) || "Attachment";
+    const key = esc(m.chatId) + "|" + esc(m.id);
+    inner = `<div class="waMedWrap" id="mw_${waKeySafe(m.id)}"><div class="waMed" onclick="waLoadMedia('${esc(m.chatId)}','${esc(m.id)}',this,'${esc(m.mediaMimetype || m.type)}')"><span class="mic">${waI(m.type === "image" || m.type === "sticker" ? "image" : m.type === "document" ? "doc" : m.type === "video" ? "video" : "audio", 17)}</span><span>${lbl}${m.mediaMimetype && !m.mediaMimetype.startsWith("image") && m.type === "document" ? "" : " — tap to load"}</span></div></div>`;
+  }
+  const body = m.body ? `<div>${waLinkify(m.body)}</div>` : "";
+  if (!inner && !body) inner = `<div style="color:#8aa0ad;font-style:italic">${waMediaType(m.type) || "Unsupported message"}</div>`;
+  const meta = `<div class="waMeta">${m.local && m.status === "pending" ? "sending… " : ""}${new Date(ts * 1000).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}${out ? waTicks(m.status || "pending") : ""}</div>`;
+  return `<div class="waB ${out ? "out" : "in"}" id="mb_${waKeySafe(m.id)}">${author}${inner}${body}${meta}</div>`;
+}
+const waKeySafe = (s) => String(s).replace(/[^a-zA-Z0-9_-]/g, "_").slice(-40);
+function waDrawMsgs(stick) {
+  const el = $("#waMsgs"); if (!el || !WA.chat || WA.chat === "__run") return;
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 130;
+  el.innerHTML = waBubblesHtml(WA.msgs[WA.chat] || []);
+  if (stick || nearBottom) el.scrollTop = el.scrollHeight;
+}
+async function waOpenChat(id) {
+  if (!id) return;
+  WA.chat = id; WA.file = null; WA.newChat = false; WA.bc = null;
+  if ($("#waApp")) $("#waApp").classList.add("wapm");
+  waDrawList(); waDrawConv();
+  await waFetchMsgs(id);
+  waMarkRead(id);
+}
+async function waFetchMsgs(id) {
+  if (!id || id === "__run") return;
+  try {
+    const j = await waCall("/sessions/" + waSid() + "/messages?chatId=" + encodeURIComponent(id) + "&limit=80");
+    let msgs = ((j && j.messages) || []).slice().reverse(); // newest first -> oldest first
+    const S = WA.send[id];
+    if (S && msgs.length) {
+      const hit = msgs.find((m) => m.direction === "outgoing" && (S.kind === "text" ? (m.body || "") === S.body : m.type === S.kind && (m.timestamp || 0) >= S.ts - 30));
+      if (hit) delete WA.send[id];
+      else if (Date.now() / 1000 - S.ts > 600) { S.fail = true; } // gateway never recorded it after 10 min
+    } else if (S && Date.now() / 1000 - S.ts > 600) S.fail = true;
+    WA.msgs[id] = msgs;
+    if (WA.chat === id) waDrawMsgs();
+  } catch (e) {
+    if (WA.chat === id) { const el = $("#waMsgs"); if (el) el.innerHTML = `<div class="waLoadErr"><b>Could not load messages</b><br>${esc(e.message)}<br><br><button class="btn p" onclick="waRefreshChat()">Try again</button></div>`; }
+  }
+}
+async function waMarkRead(id) {
+  const c = WA.chats.find((x) => x.id === id);
+  if (!c || !(c.unreadCount > 0)) return;
+  const ids = (WA.msgs[id] || []).filter((m) => m.direction === "incoming").map((m) => m.waMessageId || m.id).filter(Boolean).slice(0, 100);
+  if (!ids.length) return;
+  try {
+    await waCall("/sessions/" + waSid() + "/chats/read", { method: "POST", body: JSON.stringify({ chatId: id, messageIds: ids }) });
+    c.unreadCount = 0;
+    waDrawList();
+  } catch (e) {}
+}
+
+/* ----- composer: typing, attach, send ----- */
+function waToggleAttach() { const m = $("#waAM"); if (m) m.classList.toggle("on"); }
+document.addEventListener("click", (e) => { const m = $("#waAM"); if (m && m.classList.contains("on") && !e.target.closest("#waAM") && !e.target.closest(".waComp")) m.classList.remove("on"); });
+function waPickFile(kind) {
+  const inp = $("#wa_cf"); if (!inp) return;
+  inp.accept = kind === "media" ? "image/*,video/*" : kind === "audio" ? "audio/*" : "";
+  inp.click();
+  const m = $("#waAM"); if (m) m.classList.remove("on");
+}
+function waFileChipHtml() {
+  if (!WA.file) return "";
+  return `<div class="waFileChip" style="margin:8px 0">${waI(waMediaKind(WA.file.mimetype).replace("send-", "") === "image" ? "image" : waMediaKind(WA.file.mimetype).replace("send-", "") === "video" ? "video" : waMediaKind(WA.file.mimetype).replace("send-", "") === "audio" ? "audio" : "doc", 18)}<span><b>${esc(WA.file.filename)}</b> · ${(WA.file.size / 1048576).toFixed(1)} MB</span><button title="Remove" onclick="waDelFile()">${waI("x", 15)}</button></div>`;
+}
+function waDelFile() { WA.file = null; const r = $("#waFileRow"); if (r) r.innerHTML = ""; waSendDim(); }
+function waSendDim() {
+  const b = $("#waApp .waSendB"); if (!b) return;
+  const tx = $("#waTx");
+  b.classList.toggle("dim", !((tx && tx.value.trim()) || WA.file));
 }
 function waReadFile(e) {
   const f = e.target.files[0]; e.target.value = "";
@@ -2176,52 +2612,229 @@ function waReadFile(e) {
     const d = String(r.result || ""), m = d.match(/^data:([^;]+);base64,([\s\S]*)$/);
     if (!m) { toast("Could not read that file"); return; }
     WA.file = { b64: m[2], mimetype: m[1] || "application/octet-stream", filename: (f.name || "attachment").slice(0, 200), size: f.size };
-    waRefreshFile();
+    const row = $("#waFileRow"); if (row) row.innerHTML = waFileChipHtml();
+    waSendDim();
   };
   r.readAsDataURL(f);
 }
-function waDelFile() { WA.file = null; waRefreshFile(); }
-function waIns(t) {
-  const el = $("#wa_msg"); if (!el) return;
-  const a = el.selectionStart || 0, b = el.selectionEnd || 0;
-  el.value = el.value.slice(0, a) + t + el.value.slice(b);
-  WA.msg = el.value;
-  el.focus(); el.selectionStart = el.selectionEnd = a + t.length;
+function waTxInput(tx) {
+  WA.drafts[WA.chat] = tx.value;
+  tx.style.height = "auto"; tx.style.height = Math.min(tx.scrollHeight, 120) + "px";
+  waSendDim();
+  if (!WA.chat || WA.chat === "__run") return;
+  clearTimeout(WA._tyTo); clearTimeout(WA._tyStop);
+  WA._tyTo = setTimeout(() => waType("typing"), 300);
+  WA._tyStop = setTimeout(() => waType("paused"), 4200);
+}
+function waTxKey(e) {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); waChatSend(); }
+}
+function waType(state) {
+  if (!WA.chat || WA.chat === "__run") return;
+  waCall("/sessions/" + waSid() + "/chats/typing", { method: "POST", body: JSON.stringify({ chatId: WA.chat, state }) }).catch(() => {});
+}
+function waChatSend() {
+  const id = WA.chat;
+  if (!id || id === "__run") return;
+  const tx = $("#waTx");
+  const txt = String((tx && tx.value) || "").trim();
+  const file = WA.file;
+  if (!txt && !file) return;
+  if (!file && txt.length > 4096) { toast("WhatsApp messages are limited to 4096 characters"); return; }
+  const now = Math.floor(Date.now() / 1000);
+  const kind = file ? waMediaKind(file.mimetype).replace("send-", "") : "text";
+  const key = "local_" + uid();
+  WA.send[id] = { key, body: file ? (txt || file.filename) : txt, kind, ts: now, fail: false };
+  const s = waStuForChat(id);
+  (WA.msgs[id] = WA.msgs[id] || []).push({ id: key, chatId: id, direction: "outgoing", body: file ? (txt || file.filename) : txt, type: kind, timestamp: now, status: "pending", local: true });
+  if (tx) { tx.value = ""; tx.style.height = "auto"; }
+  WA.drafts[id] = ""; WA.file = null;
+  const row = $("#waFileRow"); if (row) row.innerHTML = "";
+  waDrawMsgs(true); waSendDim(); waType("paused");
+  const finish = (ok, err) => {
+    const S = WA.send[id];
+    if (S && S.key === key) {
+      if (ok) delete WA.send[id];
+      else S.fail = true;
+    }
+    waDrawMsgs();
+    const c = WA.chats.find((x) => x.id === id);
+    if (c) { c.lastMessage = file ? (txt || file.filename) : txt; c.lastMessageType = kind; c.timestamp = now; if (!c.name && s) c.name = s.name; }
+    waLogAdd({ name: s ? s.name : (c && c.name) || "", sid: s ? s.sid : "", phone: waDigits(id), kind, file: file ? file.filename : "", ok: ok ? 1 : 0, err: err || "", label: "Chat" });
+    waDrawList();
+    if (!ok) toast("Not sent: " + (err || "error"));
+    setTimeout(() => { if (WA.chat === id) { waFetchMsgs(id); } waFetchChats().catch(() => {}); }, 1200);
+  };
+  waSendChat(id, txt, file).then(() => finish(true)).catch((e) => {
+    if (e.status === 429 && e.retry) {
+      setTimeout(() => waSendChat(id, txt, file).then(() => finish(true)).catch((e2) => finish(false, e2.message)), Math.min(e.retry, 120) * 1000 + 1000);
+    } else finish(false, e.message);
+  });
+}
+async function waLoadMedia(chatId, msgId, el, mime) {
+  const key = chatId + "|" + msgId;
+  const wrap = document.getElementById("mw_" + waKeySafe(msgId));
+  if (!wrap) return;
+  let url = WA._media && WA._media[key];
+  if (!url) {
+    el.innerHTML = '<div class="waMed"><span class="mic"><div class="ring" style="width:14px;height:14px"></div></span><span>Loading…</span></div>';
+    try {
+      const r = await fetch(waBase() + "/sessions/" + waSid() + "/messages/" + encodeURIComponent(chatId) + "/" + encodeURIComponent(msgId) + "/media", { headers: { "X-API-Key": WA.cfg.key } });
+      if (!r.ok) throw new Error("HTTP " + r.status);
+      const blob = await r.blob();
+      url = URL.createObjectURL(blob);
+      (WA._media = WA._media || {})[key] = url;
+    } catch (e) { el.innerHTML = `<div class="waMed"><span class="mic" style="background:#e54242">${waI("x", 16)}</span><span>Could not load (${esc(e.message)})</span></div>`; return; }
+  }
+  const isImg = (mime || "").startsWith("image/"), isVid = (mime || "").startsWith("video/"), isAud = (mime || "").startsWith("audio/");
+  wrap.innerHTML = isImg ? `<img src="${url}" alt="photo" onclick="window.open('${url}','_blank')">` :
+    isVid ? `<video src="${url}" controls></video>` :
+    isAud ? `<audio src="${url}" controls></audio>` :
+    `<a class="waMed" href="${url}" download style="text-decoration:none"><span class="mic">${waI("doc", 17)}</span><span>Open attachment</span></a>`;
+}
+/* ----- media click-load cache lives on WA._media ----- */
+
+/* ----- chat list refresh from the gateway ----- */
+async function waFetchChats() {
+  if (!waReady()) return;
+  const j = await waCall("/sessions/" + waSid() + "/chats?limit=250");
+  const L = waListResp(j);
+  if (Array.isArray(L)) {
+    WA.chats = L.map((c) => Object.assign({ unreadCount: 0, kind: "individual", timestamp: 0 }, c));
+    if (route === "wa" && !WA.newChat && !WA.bc) waDrawList();
+  }
 }
 
-/* ----- broadcast: confirm + engine ----- */
-function waConfirm() {
-  const msg = String(WA.msg || "").trim();
-  if (!msg && !WA.file) { toast("Type a message or attach a file"); return; }
-  if (!WA.file && msg.length > 4096) { toast("WhatsApp messages are limited to 4096 characters"); return; }
+/* ----- broadcast composer (megaphone) — whole batch / everyone / picked students ----- */
+function waBcOpen() {
+  WA.bc = { mode: "batch", cls: "", bat: "", incAll: false, picked: {}, msg: String(WA.bc ? WA.bc.msg : "") };
+  WA.newChat = false;
+  waDrawList();
+}
+function waBcClose() { WA.bc = null; waDrawList(); }
+function waBcList() {
+  const bc = WA.bc; if (!bc) return [];
+  let L = [];
+  if (bc.mode === "batch") {
+    if (bc.bat) L = DB.Students.filter((s) => s.batchId === bc.bat);
+    else if (bc.cls) L = DB.Students.filter((s) => { const b = batchOf(s); return b && b.class === bc.cls; });
+  } else if (bc.mode === "all") L = DB.Students.slice();
+  else L = DB.Students.filter((s) => bc.picked[s.id]);
+  return bc.incAll || bc.mode === "pick" ? L : L.filter((s) => s.status === "Active");
+}
+function waBcStats(L) {
+  const ok = L.filter((s) => waPhone(s.phone));
+  return { n: L.length, noPhone: L.length - ok.length, dups: ok.length - new Set(ok.map((s) => waPhone(s.phone))).size };
+}
+function waBcHtml() {
+  const bc = WA.bc;
+  const used = CLASSES.filter((c) => DB.Batches.some((b) => b.class === c));
+  const B = sortBatches(DB.Batches).filter((b) => !bc.cls || b.class === bc.cls);
+  const L = waBcList(), stt = waBcStats(L);
+  const picks = L.slice(0, 80);
+  let pickHtml = "";
+  if (bc.mode === "batch") {
+    pickHtml = `
+     <div class="waLbl">Recipients</div>
+     <select class="waIn" onchange="waBcSet('cls',this.value)">
+      <option value="">Select class</option>
+      ${used.map((c) => `<option value="${esc(c)}" ${bc.cls === c ? "selected" : ""}>${esc(clsLabel(c))}</option>`).join("")}
+     </select>
+     <select class="waIn" onchange="waBcSet('bat',this.value)" ${bc.cls ? "" : "disabled"}>
+      <option value="">All batches in this class</option>
+      ${B.map((b) => `<option value="${esc(b.id)}" ${bc.bat === b.id ? "selected" : ""}>${esc(bLabel(b))}</option>`).join("")}
+     </select>
+     <label class="waChk"><input type="checkbox" ${bc.incAll ? "checked" : ""} onchange="waBcSet('incAll',this.checked)"><span>Include Inactive, Suspended and Left students</span></label>`;
+  } else if (bc.mode === "all") {
+    pickHtml = `
+     <label class="waChk"><input type="checkbox" ${bc.incAll ? "checked" : ""} onchange="waBcSet('incAll',this.checked)"><span>Include Inactive, Suspended and Left students</span></label>`;
+  } else {
+    const q = String(bc._q || "").trim().toLowerCase();
+    let SL = DB.Students.slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    if (q) SL = SL.filter((s) => [s.name, s.sid, s.phone].join(" ").toLowerCase().includes(q));
+    pickHtml = `
+     <input class="waIn" placeholder="Search students…" value="${esc(bc._q || "")}" oninput="WA.bc._q=this.value;waBcRefresh()">
+     <div style="max-height:190px;overflow:auto;display:flex;flex-direction:column">
+     ${SL.map((s) => `<label class="waChk" style="padding:5px 2px"><input type="checkbox" ${bc.picked[s.id] ? "checked" : ""} onchange="waBcPick('${s.id}',this.checked)"><span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.name)} <small style="color:#8aa0ad">${esc(s.sid)} · ${esc(s.phone || "no phone")}</small></span><span class="waTag s-${esc(s.status)}">${esc(s.status)}</span></label>`).join("") || '<div class="mut" style="font-size:13px;padding:8px">No students match.</div>'}
+     </div>`;
+  }
+  return `<div class="waBc">
+   <div class="waBcH"><button class="waHb" onclick="waBcClose()">${waI("back")}</button><b>New broadcast</b></div>
+   <div class="waBcBody">
+    <div class="waSeg">
+     <button class="${bc.mode === "batch" ? "on" : ""}" onclick="WA.bc.mode='batch';waBcRefresh()">Whole batch</button>
+     <button class="${bc.mode === "all" ? "on" : ""}" onclick="WA.bc.mode='all';waBcRefresh()">Everyone</button>
+     <button class="${bc.mode === "pick" ? "on" : ""}" onclick="WA.bc.mode='pick';waBcRefresh()">Pick students</button>
+    </div>
+    ${pickHtml}
+    ${L.length ? `<div class="waLbl">Recipients preview (${stt.n - stt.noPhone} reachable${stt.noPhone ? " · " + stt.noPhone + " without phone" : ""}${stt.dups ? " · " + stt.dups + " duplicate" : ""})</div>
+    <div class="waSees">${picks.map((s) => `<span class="waSee${waPhone(s.phone) ? "" : " off"}">${esc(s.name)}<small>${esc(s.phone || "no phone")}</small></span>`).join("")}${L.length > 80 ? `<span class="waSee off">+${L.length - 80} more…</span>` : ""}</div>` : '<div class="mut" style="font-size:13px">No recipients yet — choose a class, batch or students above.</div>'}
+    <div class="waLbl">Message</div>
+    <textarea class="waIn waBcMsg" id="waBcMsg" placeholder="Type the message to send… Use {name}, {sid}, {class}, {batch}, {guardian} or {school} — filled per student." oninput="WA.bc.msg=this.value">${esc(bc.msg || "")}</textarea>
+    <div class="waVarRow">${WA_VARS.map((v) => `<button onclick="waBcIns('{${v}}')">{${v}}</button>`).join("")}</div>
+    <div id="waBcFileRow">${bc.file ? `<div class="waFileChip">${waI("doc", 18)}<span><b>${esc(bc.file.filename)}</b> · ${(bc.file.size / 1048576).toFixed(1)} MB</span><button title="Remove" onclick="WA.bc.file=null;waBcRefresh()">${waI("x", 15)}</button></div>` : ""}
+    <input type="file" id="wa_bf" hidden onchange="waBcReadFile(event)"></div>
+    <button class="btn" style="align-self:flex-start" onclick="$('#wa_bf').click()">${bc.file ? "Replace attachment" : "Attach image, audio or document"}</button>
+    <div class="mut" style="font-size:12px;color:#8aa0ad">Messages go out one by one with a pause between them, so WhatsApp treats it like normal typing.</div>
+   </div>
+   <div class="waBcFoot">
+    <span class="cnt">Sending to <b>${stt.n - stt.noPhone}</b> student${stt.n - stt.noPhone === 1 ? "" : "s"}${stt.noPhone ? ` · ${stt.noPhone} skipped (no phone)` : ""}${stt.dups ? ` · ${stt.dups} duplicate number${stt.dups > 1 ? "s" : ""}` : ""}</span>
+    <button class="waGo" onclick="waBcConfirm()" ${stt.n - stt.noPhone > 0 ? "" : "disabled"}>${waI("bc", 16)} Review &amp; send</button>
+   </div>
+  </div>`;
+}
+function waBcRefresh() { const el = $("#waList"); if (el && WA.bc) { el.innerHTML = waBcHtml(); const tx = $("#waBcMsg"); if (tx) tx.value = WA.bc.msg || ""; } }
+function waBcSet(k, v) { WA.bc[k] = v; if (k === "cls") WA.bc.bat = ""; waBcRefresh(); }
+function waBcPick(id, on) { if (on) WA.bc.picked[id] = 1; else delete WA.bc.picked[id]; waBcRefresh(); }
+function waBcReadFile(e) {
+  const f = e.target.files[0]; e.target.value = "";
+  if (!f) return;
+  if (f.size > WA_MAX) { toast("That file is too big. Keep attachments under 45 MB."); return; }
+  const r = new FileReader();
+  r.onerror = () => toast("Could not read that file");
+  r.onload = () => {
+    const d = String(r.result || ""), m = d.match(/^data:([^;]+);base64,([\s\S]*)$/);
+    if (!m) { toast("Could not read that file"); return; }
+    WA.bc.file = { b64: m[2], mimetype: m[1] || "application/octet-stream", filename: (f.name || "attachment").slice(0, 200), size: f.size };
+    waBcRefresh();
+  };
+  r.readAsDataURL(f);
+}
+function waBcIns(t) {
+  const el = $("#waBcMsg"); if (!el) return;
+  const a = el.selectionStart || 0, b = el.selectionEnd || 0;
+  el.value = el.value.slice(0, a) + t + el.value.slice(b);
+  WA.bc.msg = el.value;
+  el.focus(); el.selectionStart = el.selectionEnd = a + t.length;
+}
+function waBcConfirm() {
+  const bc = WA.bc; if (!bc) return;
+  const msg = String(bc.msg || "").trim();
+  if (!msg && !bc.file) { toast("Type a message or attach a file"); return; }
+  if (!bc.file && msg.length > 4096) { toast("WhatsApp messages are limited to 4096 characters"); return; }
   if (!waReady()) { waSettings(); toast("Set up the WhatsApp gateway first"); return; }
-  const L = waList(), st = waStats(L);
+  const L = waBcList(), stt = waBcStats(L);
   if (!L.length) { toast("No recipients selected"); return; }
-  if (st.n - st.noPhone <= 0) { toast("None of these students has a phone number"); return; }
-  const b = WA.bat ? DB.Batches.find((x) => x.id === WA.bat) : null;
-  const label = WA.tab === "batch" ? (b ? bLabel(b) : clsLabel(WA.cls) + " — all batches") : "Everyone";
-  WA.pend = { list: L, label };
-  $("#modal").innerHTML = `<h2>Send to ${st.n - st.noPhone} student${st.n - st.noPhone > 1 ? "s" : ""}?</h2>
-  <p style="margin-bottom:10px"><b>${esc(label)}</b>${WA.file ? ` · ${esc(WA.file.filename)}` : ""}</p>
-  <div class="warnbox">${st.noPhone ? `<b>${st.noPhone}</b> of them have no phone number and will be skipped. ` : ""}${st.dups ? `${st.dups} number${st.dups > 1 ? "s appear" : " appears"} more than once. ` : ""}${WA.file && msg.length > 1024 ? "The message is longer than 1024 characters, so each student gets it as a text and then the file. " : ""}Sending is one by one with a pause between messages.</div>
+  if (stt.n - stt.noPhone <= 0) { toast("None of these students has a phone number"); return; }
+  const b = bc.bat ? DB.Batches.find((x) => x.id === bc.bat) : null;
+  const label = bc.mode === "batch" ? (b ? bLabel(b) : clsLabel(bc.cls) + " — all batches") : bc.mode === "all" ? "Everyone" : "Picked students";
+  WA.pend = { list: L, label, msg, file: bc.file };
+  $("#modal").innerHTML = `<h2>Send to ${stt.n - stt.noPhone} student${stt.n - stt.noPhone > 1 ? "s" : ""}?</h2>
+  <p style="margin-bottom:10px"><b>${esc(label)}</b>${bc.file ? ` · ${esc(bc.file.filename)}` : ""}</p>
+  <div class="warnbox">${stt.noPhone ? `<b>${stt.noPhone}</b> of them have no phone number and will be skipped. ` : ""}${stt.dups ? `${stt.dups} number${stt.dups > 1 ? "s appear" : " appears"} more than once. ` : ""}${bc.file && msg.length > 1024 ? "The message is longer than 1024 characters, so each student gets it as a text and then the file. " : ""}Sending is one by one with a pause between messages — it continues in the background if you open a chat.</div>
   <label class="chk" style="margin-top:10px"><input type="checkbox" id="wa_dedup" checked><span>Send only once to each phone number</span></label>
-  <div class="acts"><button class="btn" onclick="closeM()">Cancel</button><button class="btn p" onclick="waStart()">Send now</button></div>`;
+  <div class="acts"><button class="btn" onclick="closeM()">Cancel</button><button class="btn p" onclick="waBcStart()">Send now</button></div>`;
   $("#ov").classList.add("on");
 }
-async function waStart() {
-  const P = WA.pend || { list: [], label: "" };
+async function waBcStart() {
+  const P = WA.pend || { list: [], label: "", msg: "", file: null };
   const dedup = !$("#wa_dedup") || $("#wa_dedup").checked;
   closeM();
   if (WA.run && !WA.run.done) { toast("A broadcast is already running"); return; }
-  const msg = String(WA.msg || "").trim(), file = WA.file;
   try {
-    const j = await waCall("/sessions/" + encodeURIComponent(WA.cfg.session));
+    const j = await waCall("/sessions/" + waSid());
     const st = (j && j.status) || "";
-    if (st !== "ready") {
-      if (st === "qr_ready") waQrModal(); else waSettings();
-      toast("WhatsApp session is " + (WA_ST_LABEL[st] || st) + " — link the phone first");
-      return;
-    }
+    if (st !== "ready") { WA.conn = { st, phone: "", push: "" }; waPaint(); toast("WhatsApp session is " + (WA_ST_LABEL[st] || st) + " — link the phone first"); return; }
   } catch (e) { toast("Gateway not reachable: " + e.message); return; }
   const seen = new Set(), list = [];
   let noPhone = 0, dup = 0;
@@ -2232,58 +2845,90 @@ async function waStart() {
     seen.add(c); list.push(s);
   });
   if (!list.length) { toast("No one to send to"); return; }
-  waRun(list, P.label, msg, file, { noPhone, dup });
+  WA.bc = null;
+  waDrawList();
+  waRun(list, P.label, P.msg, P.file, { noPhone, dup });
 }
+function waViewRun() { WA.chat = "__run"; waDrawConv(); waDrawList(); }
+
+/* ----- broadcast engine (unchanged rhythm: one by one + pause) ----- */
 async function waRun(list, label, msg, file, skip) {
-  WA.run = { list, i: 0, ok: 0, fail: 0, errs: [], stop: false, pause: false, done: false, label, msg, file, skip };
-  vWa();
+  WA.run = { list: list.map((s) => ({ s, st: "pend" })), i: -1, ok: 0, fail: 0, errs: [], stop: false, pause: false, done: false, label, skip, msg, file };
+  WA.chat = "__run";
+  waDrawConv(); waDrawList();
   const R = WA.run;
-  for (R.i = 0; R.i < list.length && !R.stop; R.i++) {
+  for (R.i = 0; R.i < R.list.length && !R.stop; R.i++) {
     while (R.pause && !R.stop) await waSleep(300);
     if (R.stop) break;
-    const s = list[R.i];
+    const s = R.list[R.i].s;
+    R.list[R.i].st = "sending";
+    waDrawRunPanel();
     let err = "";
     const kind = file ? waMediaKind(file.mimetype).replace("send-", "") : "text";
-    try { await waSendOne(s, waFill(msg, s), file); R.ok++; }
+    try { await waSendOne(s, waFill(msg, s), file); R.list[R.i].st = "ok"; R.ok++; }
     catch (e) {
       if (e.status === 429 && e.retry) {
+        R.list[R.i].st = "retry";
+        waDrawRunPanel();
         await waSleep(Math.min(e.retry, 120) * 1000 + 1000);
-        try { await waSendOne(s, waFill(msg, s), file); R.ok++; }
-        catch (e2) { err = e2.message; R.fail++; R.errs.push({ name: s.name, err }); }
-      } else { err = e.message; R.fail++; R.errs.push({ name: s.name, err }); }
+        try { await waSendOne(s, waFill(msg, s), file); R.list[R.i].st = "ok"; R.ok++; }
+        catch (e2) { err = e2.message; R.list[R.i].st = "fail"; R.fail++; R.errs.push({ name: s.name, err }); }
+      } else { err = e.message; R.list[R.i].st = "fail"; R.fail++; R.errs.push({ name: s.name, err }); }
     }
-    WA.file = file; // waLogAdd reads the filename from here
-    waLogAdd(s, kind, !err, err, label);
-    WA.file = file;
-    if (route === "wa") vWa();
-    if (R.i + 1 < list.length && !R.stop) await waSleep(((Number(WA.cfg.dmin) || 3) + Math.random() * Math.max(0, (Number(WA.cfg.dmax) || 8) - (Number(WA.cfg.dmin) || 3))) * 1000);
+    waLogAdd({ name: s.name || "", sid: s.sid || "", phone: s.phone || "", kind, file: file ? file.filename : "", ok: err ? 0 : 1, err, label });
+    waDrawRunPanel();
+    const c = WA.chats.find((x) => x.id === waPhone(s.phone));
+    if (c) { c.lastMessage = file ? (waFill(msg, s) || file.filename) : waFill(msg, s); c.timestamp = Math.floor(Date.now() / 1000); }
+    if (WA.chat === waPhone(s.phone)) waFetchMsgs(WA.chat).catch(() => {});
+    if (R.i + 1 < R.list.length && !R.stop) await waSleep(((Number(WA.cfg.dmin) || 3) + Math.random() * Math.max(0, (Number(WA.cfg.dmax) || 8) - (Number(WA.cfg.dmin) || 3))) * 1000);
   }
   R.done = true;
-  if (route === "wa") vWa(); else toast("WhatsApp broadcast finished: " + R.ok + " sent" + (R.fail ? ", " + R.fail + " failed" : ""));
+  waDrawRunPanel(); waDrawList();
+  waFetchChats().catch(() => {});
+  toast("Broadcast finished: " + R.ok + " sent" + (R.fail ? ", " + R.fail + " failed" : ""));
 }
-function waProgressHtml() {
-  const R = WA.run, n = R.list.length, p = Math.min(R.i + (R.done ? 0 : 1), n);
-  return `<div class="glass waprog">
-   <div class="waprog-h"><div><b>${esc(R.label)}</b><small>${R.done ? "Finished" : R.stop ? "Stopping…" : R.pause ? "Paused" : "Sending in progress"} — sending continues if you leave this page</small></div><b class="waprog-n">${p} / ${n}</b></div>
-   <div class="wabar"><i style="width:${n ? Math.round((p / n) * 100) : 100}%"></i></div>
-   <div class="waprog-s"><span class="chip s-Active">${R.ok} sent</span><span class="chip s-Left">${R.fail} failed</span>${!R.done && !R.stop ? '<span class="mut">Now: ' + esc((R.list[R.i] || {}).name || "") + "</span>" : ""}</div>
-   ${R.skip.noPhone || R.skip.dup ? `<div class="mut" style="font-size:12px;margin-top:6px">Skipped ${R.skip.noPhone} without a phone and ${R.skip.dup} duplicate number${R.skip.dup === 1 ? "" : "s"}.</div>` : ""}
-   ${R.errs.length ? `<div class="waerrs">${R.errs.slice(-8).map((e) => `<div class="waerr-i"><b>${esc(e.name)}</b> — ${esc(e.err)}</div>`).join("")}</div>` : ""}
-   <div class="acts">${R.done ? '<button class="btn p" onclick="waClearRun()">Done</button>' : (R.stop ? "" : `<button class="btn" onclick="waPause()">${R.pause ? "Resume" : "Pause"}</button>`) + (R.done ? "" : '<button class="btn d" onclick="waStop()">Stop</button>')}</div>
-  </div>`;
-}
-function waPause() { const R = WA.run; if (!R || R.done) return; R.pause = !R.pause; if (route === "wa") vWa(); }
-function waStop() { const R = WA.run; if (!R || R.done) return; R.stop = true; if (route === "wa") vWa(); }
-function waClearRun() { WA.run = null; vWa(); }
-
-/* ----- history ----- */
-function waHistoryHtml() {
-  return `<div class="glass tools">
-   <input class="in grow" id="wa_lq" placeholder="Search history by name, ID, attachment or error" value="${esc(WA.lq || "")}">
-   <button class="btn d" onclick="waClearLog()">Clear history</button>
+function waRunPanelHtml() {
+  const R = WA.run;
+  if (!R) return waEmptyHtml();
+  return `<div class="waConvH" style="background:#fff">
+   <button class="waHb" title="Back" onclick="waBackToList()" style="display:none" id="waBack">${waI("back")}</button>
+   <span class="waAv sm" style="background:#00a884">${waI("bc", 18)}</span>
+   <div class="nm"><b>Broadcast</b><small id="waRunSub">${esc(R.label)} · 0 sent</small></div>
   </div>
-  <div class="glass tw" style="margin-top:12px"><table><thead><tr><th>When</th><th>Recipient</th><th>Type</th><th>Attachment</th><th>Sent as</th><th>Result</th></tr></thead><tbody id="wa_ltb">${waLogRows()}</tbody></table></div>`;
+  <div class="waRunBar" id="waRunBar" style="background:#fff;border-left:1px solid #e9edef;padding:0 16px 12px;flex:none"><div class="waBar"><i style="width:0%"></i></div><small class="mut"></small></div>
+  <div class="waRunMsgs" id="waRunMsgs"></div>
+  <div class="waRunActs" id="waRunActs"></div>`;
 }
+function waDrawRunPanel() {
+  const R = WA.run; if (!R) return;
+  const box = $("#waRunMsgs"), acts = $("#waRunActs"), head = $("#waRunBar");
+  const sub = $("#waRunSub");
+  if (sub) sub.textContent = R.label + " · " + (R.done ? "Finished — " : R.stop ? "Stopping… " : R.pause ? "Paused — " : "") + R.ok + " sent" + (R.fail ? " · " + R.fail + " failed" : "");
+  if (head) head.innerHTML = `<div class="waBar"><i style="width:${R.list.length ? Math.round((Math.min(R.i + (R.done ? 0 : 1), R.list.length) / R.list.length) * 100) : 100}%"></i></div>
+   <small class="mut">${R.done ? (R.stop ? "Stopped after " : "Finished — ") + R.ok + " of " + R.list.length + " delivered." : ""}${R.skip && R.skip.noPhone ? "Skipped " + R.skip.noPhone + " without a phone" : ""}${R.skip && R.skip.dup ? (R.skip.noPhone ? " · " : "") + R.skip.dup + " duplicate number" + (R.skip.dup === 1 ? "" : "s") : ""}</small>`;
+  if (box) {
+    box.innerHTML = R.list.map((it, idx) => {
+      const out = it.st === "pend" ? '<span class="waTag">queued</span>' : it.st === "sending" ? '<span class="waTag" style="background:#fff3d6;color:#8a6d1a">sending…</span>' : it.st === "retry" ? '<span class="waTag" style="background:#fff3d6;color:#8a6d1a">rate-limited, retrying</span>' : it.st === "ok" ? waTicks("delivered").replace("currentColor", "#008069") : waTicks("failed");
+      return `<div class="waB ${it.st === "ok" ? "out" : "in"}" style="${it.st === "pend" ? "opacity:.55" : ""}"><div class="waAuthor">${esc(it.s.name)}</div><div>${esc(waFill(R.msg, it.s) || (R.file ? R.file.filename : ""))}</div><div class="waMeta">${new Date().toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} ${out}</div></div>`;
+    }).join("");
+    box.scrollTop = box.scrollHeight;
+  }
+  if (acts) acts.innerHTML = (R.done ? '<button class="btn p" onclick="waClearRun()">Back to chats</button>' : (R.stop ? "" : `<button class="btn" onclick="waPause()">${R.pause ? "Resume" : "Pause"}</button>`) + '<button class="btn d" onclick="waStop()">Stop</button>') + `<span class="mut" style="font-size:12px;flex:1">${R.done ? "" : "Sending continues if you open another chat."}</span>`;
+}
+function waPause() { const R = WA.run; if (!R || R.done) return; R.pause = !R.pause; waDrawRunPanel(); }
+function waStop() { const R = WA.run; if (!R || R.done) return; R.stop = true; waDrawRunPanel(); }
+function waClearRun() { WA.run = null; waBackToList(); }
+
+/* ----- sent history (log) modal ----- */
+function waLogModal() {
+  $("#modal").innerHTML = `<h2>Sent history</h2>
+  <p class="mut" style="font-size:12.5px;margin-bottom:10px">Everything sent from this browser, newest first (kept locally, max 200). Full conversations live in WhatsApp — open a chat to read them.</p>
+  <div style="display:flex;gap:8px;margin-bottom:10px"><input class="in grow" id="wa_lq" placeholder="Search by name, ID, attachment or error" value="${esc(WA.lq || "")}" oninput="WA.lq=this.value;$('#wa_ltb').innerHTML=waLogRows()"><button class="btn d" onclick="waClearLog()">Clear</button></div>
+  <div class="tw"><table><thead><tr><th>When</th><th>Recipient</th><th>Type</th><th>Attachment</th><th>Sent as</th><th>Result</th></tr></thead><tbody id="wa_ltb">${waLogRows()}</tbody></table></div>
+  <div class="acts"><button class="btn p" onclick="closeM()">Close</button></div>`;
+  $("#ov").classList.add("on");
+}
+WA.lq = "";
 function waLogRows() {
   const q = String(WA.lq || "").toLowerCase();
   const L = WA.log.filter((x) => !q || [x.name, x.sid, x.phone, x.file, x.label, x.err].join(" ").toLowerCase().includes(q));
@@ -2293,9 +2938,9 @@ function waLogRows() {
    <td>${x.ok ? '<span class="chip s-Active">Sent</span>' : `<span class="chip s-Left">Failed</span><small class="mut" style="display:block">${esc(x.err)}</small>`}</td></tr>`).join("") ||
    '<tr><td colspan="6"><div class="empty">Nothing sent yet from this device.</div></td></tr>';
 }
-function waClearLog() { if (!confirm("Clear the WhatsApp history on this device?")) return; WA.log = []; waSaveLog(); vWa(); }
+function waClearLog() { if (!confirm("Clear the WhatsApp history on this device?")) return; WA.log = []; waSaveLog(); waLogModal(); }
 
-/* ----- settings + session + QR ----- */
+/* ----- settings modal ----- */
 function waSettings() {
   const c = WA.cfg;
   $("#modal").innerHTML = `<h2>WhatsApp settings</h2>
@@ -2319,7 +2964,7 @@ function waSettings() {
 }
 function waFillSess() {
   const sel = $("#wa_sess"); if (!sel) return;
-  sel.innerHTML = '<option value="">Select a session</option>' + (WA.sess || []).map((s) => `<option value="${esc(s.id)}" ${s.id === WA.cfg.session ? "selected" : ""}>${esc(s.name || s.id)} — ${esc(s.status || "?")}${s.phone ? " · " + esc(s.phone) : ""}</option>`).join("");
+  sel.innerHTML = '<option value="">Select a session</option>' + (WA.sess || []).map((s) => `<option value="${esc(s.id)}" ${s.id === WA.cfg.session ? "selected" : ""}>${esc(s.name || s.id)} — ${esc(s.status || "?")}${s.phone ? " · +" + esc(s.phone) : ""}</option>`).join("");
   if (!WA.sess && waReady()) waLoadSess(true);
 }
 async function waLoadSess(quiet) {
@@ -2345,7 +2990,7 @@ async function waTest() {
     if (!tmp.session) st.textContent = "Gateway OK — " + L.length + " session" + (L.length === 1 ? "" : "s") + " found. Choose one and press Save.";
     else {
       const s = L.find((x) => x.id === tmp.session), stat = s ? s.status : "not found";
-      st.innerHTML = "Gateway OK — session: <b>" + esc(stat === "ready" ? "ready and connected" : WA_ST_LABEL[stat] || stat) + "</b>" + (stat === "qr_ready" ? " — save, then press Connect to scan the QR." : ". Press Save when done.");
+      st.innerHTML = "Gateway OK — session: <b>" + esc(stat === "ready" ? "ready and connected" : WA_ST_LABEL[stat] || stat) + "</b>" + (stat === "qr_ready" ? " — save, then link the phone by QR." : ". Press Save when done.");
     }
   } catch (e) { st.textContent = "Failed: " + e.message; }
   finally { Object.assign(WA.cfg, old); }
@@ -2358,7 +3003,9 @@ function waSaveSettings() {
   WA.cfg.dmin = Math.max(1, Number($("#wa_dmin").value) || 4);
   WA.cfg.dmax = Math.max(WA.cfg.dmin, Number($("#wa_dmax").value) || WA.cfg.dmin + 4);
   waSaveCfg();
-  closeM(); vWa();
+  WA.conn = { st: "", phone: "", push: "" };
+  closeM();
+  if (route === "wa") waPaint();
   toast("WhatsApp settings saved");
 }
 async function waNewSess() {
@@ -2369,39 +3016,41 @@ async function waNewSess() {
   const st = $("#wa_st"); st.textContent = "Creating session…";
   try {
     const j = await waCall("/sessions", { method: "POST", body: JSON.stringify({ name }) });
-    const id = (j && j.id) || (j && j.data && j.data.id) || "";
-    WA.cfg.session = id;
-    waSaveSettings();
-    waQrModal();
+    WA.cfg.session = (j && j.id) || "";
+    waSaveCfg();
+    WA.sess = WA.sess || [];
+    if (!WA.sess.some((s) => s.id === WA.cfg.session)) WA.sess.push({ id: WA.cfg.session, name, status: "created" });
+    st.textContent = "Session created. Press Save, then link the phone by QR code.";
+    waFillSess();
+    const sel = $("#wa_sess"); if (sel) sel.value = WA.cfg.session;
   } catch (e) { st.textContent = "Could not create the session: " + e.message; }
 }
-async function waQrModal() {
-  if (!waReady()) { waSettings(); return; }
-  $("#modal").innerHTML = `<h2>Link WhatsApp</h2>
-  <div class="waqr" id="wa_qrbox"><div class="mut" style="color:#17324d">Loading QR code…</div></div>
-  <p class="mut" style="font-size:12.5px;margin-top:10px">On the phone: <b>WhatsApp → Settings → Linked devices → Link a device</b>, then scan. The QR refreshes by itself. Keep this window open until it says connected.</p>
-  <div class="acts"><button class="btn" onclick="closeM()">Close</button></div>`;
-  $("#ov").classList.add("on");
-  waQrPoll();
+
+/* ----- WhatsApp button on a student row ----- */
+function waOpenStudent(id) {
+  const s = DB.Students.find((x) => x.id === id);
+  if (!s) { toast("Student not found"); return; }
+  if (!waPhone(s.phone)) { toast("This student has no valid phone number"); return; }
+  go("wa");
+  const wait = () => {
+    if (WA.conn.st === "ready" && $("#waShell")) { waOpenStu(id); return; }
+    if (route !== "wa") return;
+    setTimeout(wait, 250);
+  };
+  waEnsureConn().then(wait);
 }
-async function waQrPoll() {
-  const box = $("#wa_qrbox");
-  if (!box) return; // modal was closed — stop polling
-  try {
-    const j = await waCall("/sessions/" + encodeURIComponent(WA.cfg.session));
-    const st = (j && j.status) || "";
-    if (st === "ready") { box.innerHTML = '<div class="waqr-ok">WhatsApp connected' + (j.phone ? " · " + esc(j.phone) : "") + "</div>"; waCheckConn(); return; }
-    if (["created", "disconnected", "failed"].includes(st)) await waCall("/sessions/" + encodeURIComponent(WA.cfg.session) + "/start", { method: "POST" }).catch(() => {});
-    const q = await waCall("/sessions/" + encodeURIComponent(WA.cfg.session) + "/qr").catch(() => null);
-    const data = (q && (q.qr || (q.data && q.data.qr) || q.qrcode || (q.data && q.data.qrcode))) || "";
-    if (data.startsWith("data:image")) box.innerHTML = `<img src="${data}" alt="QR">`;
-    else if (data) {
-      await lib("qr");
-      const b2 = $("#wa_qrbox");
-      if (b2 && window.QRCode) { b2.innerHTML = ""; new QRCode(b2, { text: data, width: 232, height: 232, correctLevel: QRCode.CorrectLevel.M }); }
-    } else box.innerHTML = '<div class="mut" style="color:#17324d">' + esc(WA_ST_LABEL[st] || st || "Waiting for the QR code…") + "</div>";
-  } catch (e) { box.innerHTML = '<div class="mut" style="color:#17324d">' + esc(e.message) + "</div>"; }
-  setTimeout(waQrPoll, 2500);
+
+/* ----- background tick: refresh chats / messages / connection while the page is open ----- */
+function waTickStart() { if (WA._tik) return; WA._tik = setInterval(waTick, 2000); }
+function waTick() {
+  if (route !== "wa") return;
+  WA.tickN++;
+  if (document.hidden || !waReady()) return;
+  if (!$("#waQrA")) { if (WA.tickN % 4 === 0) waEnsureConn(); }
+  if (WA.conn.st === "ready") {
+    if (WA.tickN % 3 === 0 && WA.chat && WA.chat !== "__run") waFetchMsgs(WA.chat).catch(() => {});
+    if (WA.tickN % 10 === 0 && !WA.newChat && !WA.bc) waFetchChats().catch(() => {});
+  }
 }
 
 /* ============ WATERMARK (inline SVG so it can follow the theme colours) ============ */
