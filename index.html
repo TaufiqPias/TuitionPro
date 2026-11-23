@@ -7,15 +7,21 @@
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
     <title>TuitionPro</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="style.css" />
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
   </head>
   <body data-theme="ocean" class="locked">
+    <script>document.body.dataset.theme = localStorage.getItem("theme") || "ocean";</script>
+    <div class="loader on" id="loader">
+      <div class="ld"><div class="ring"></div><div class="ring r2"></div><div class="lt">T</div></div>
+      <p id="loaderTxt">Loading TuitionPro…</p>
+    </div>
+
     <!-- Sign in / sign up -->
     <div class="login" id="login" hidden>
       <form class="lcard glass" id="lf" autocomplete="on">

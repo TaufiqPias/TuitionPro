@@ -76,7 +76,7 @@ const PROFILE = [
   "photo",
 ];
 const DAY = 864e5;
-const SCHEMA = "2"; // bump when a table gains a column; existing user sheets are upgraded automatically
+const BUILD = "3"; // the app compares this to know whether you deployed the latest Code.gs
 
 /* ---------- small helpers ---------- */
 const P_ = () => PropertiesService.getScriptProperties();
@@ -112,13 +112,58 @@ const adminVer_ = () => P_().getProperty("VADMIN") || "0";
 const curVer_ = (u) =>
   u.role === "master" ? ver_(u.id) + "." + adminVer_() : ver_(u.id);
 
-function rows_(sh) {
-  if (sh.getLastRow() < 2) return [];
+// Reads a sheet into objects. Self-heals: adds missing columns, and turns any value Sheets auto-converted
+// (times, dates, phone numbers) back into the plain text the app expects.
+function rows_(sh, cols) {
+  if (sh.getLastRow() < 2) {
+    if (cols) ensureCols_(sh, cols);
+    return [];
+  }
   const v = sh.getDataRange().getValues(),
     h = v.shift();
+  if (cols && cols.some((c) => h.indexOf(c) < 0)) {
+    ensureCols_(sh, cols);
+    return rows_(sh);
+  }
+  const tz = sh.getParent().getSpreadsheetTimeZone();
+  const sc = h.indexOf("start");
+  const disp =
+    sc >= 0 && v.some((r) => r[sc] instanceof Date)
+      ? sh.getRange(2, sc + 1, v.length, 1).getDisplayValues()
+      : null;
   return v
-    .filter((r) => r[0] !== "")
-    .map((r) => Object.fromEntries(h.map((k, i) => [k, r[i]])));
+    .map((r, ri) =>
+      Object.fromEntries(
+        h.map((k, i) => [k, norm_(k, r[i], tz, disp && disp[ri][0])]),
+      ),
+    )
+    .filter((o) => o[h[0]] !== "");
+}
+function hhmm_(s) {
+  // "4:25:00 PM" or "16:25:00" -> "16:25"
+  const m = String(s).match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp][Mm])?/);
+  if (!m) return "";
+  let hr = +m[1];
+  const ap = (m[3] || "").toLowerCase();
+  if (ap === "pm" && hr < 12) hr += 12;
+  if (ap === "am" && hr === 12) hr = 0;
+  return String(hr).padStart(2, "0") + ":" + m[2];
+}
+function norm_(k, v, tz, shown) {
+  if (k === "phone" && typeof v === "number")
+    return /^1\d{9}$/.test(String(v)) ? "0" + v : String(v);
+  if (!(v instanceof Date)) return v;
+  if (k === "start")
+    return hhmm_(shown) || Utilities.formatDate(v, tz, "HH:mm");
+  if (k === "joined" || k === "date")
+    return Utilities.formatDate(v, tz, "yyyy-MM-dd");
+  return v.toISOString();
+}
+// Always write as text so Sheets never reinterprets what we store.
+function writeRows_(sh, startRow, lines) {
+  const rng = sh.getRange(startRow, 1, lines.length, lines[0].length);
+  rng.setNumberFormat("@");
+  rng.setValues(lines);
 }
 function put_(sh, o) {
   const h = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
@@ -132,8 +177,10 @@ function put_(sh, o) {
           .map(String);
   const at = ids.indexOf(String(o.id));
   const line = h.map((k) => (o[k] === undefined ? "" : o[k]));
-  if (at < 0) sh.appendRow(line);
-  else sh.getRange(at + 2, 1, 1, h.length).setValues([line]);
+  if (at >= 0) return writeRows_(sh, at + 2, [line]);
+  const r = sh.getLastRow() + 1;
+  if (r > sh.getMaxRows()) sh.insertRowsAfter(sh.getMaxRows(), 1);
+  writeRows_(sh, r, [line]);
 }
 function del_(sh, id) {
   if (sh.getLastRow() < 2) return;
@@ -206,19 +253,13 @@ function ws_(users, u) {
     put_(users, u);
   }
   let first = ss.getSheetByName("Sheet1");
-  const key = "S_" + ss.getId(),
-    migrate = P_().getProperty(key) !== SCHEMA;
   for (const t in DATA) {
     const have = ss.getSheetByName(t);
-    if (have) {
-      if (migrate) ensureCols_(have, DATA[t]);
-      continue;
-    }
+    if (have) continue;
     const sh = first ? first.setName(t) : ss.insertSheet(t);
     first = null;
     initSheet_(sh, DATA[t]);
   }
-  if (migrate) P_().setProperty(key, SCHEMA);
   return ss;
 }
 
@@ -272,7 +313,17 @@ function session_(users, u) {
   u.token = Utilities.getUuid() + Utilities.getUuid();
   u.exp = String(Date.now() + 30 * DAY);
   put_(users, u);
-  return out_({ ok: true, token: u.token });
+  return u.token;
+}
+function allPayload_(users, U, u) {
+  // everything the app needs on start-up
+  const ss = ws_(users, u),
+    data = {};
+  for (const t in DATA) data[t] = rows_(ss.getSheetByName(t), DATA[t]);
+  const res = { build: BUILD, ver: curVer_(u), data, me: pub_(u) };
+  if (u.role === "master")
+    res.admin = { users: U.filter((r) => r.role !== "master").map(brief_) };
+  return res;
 }
 function check_(U, q, needEmail) {
   const id = String(q.id || "")
@@ -367,7 +418,8 @@ function doPost(e) {
             (u.note ? " Reason: " + u.note : ""),
         );
       u.id = String(u.id);
-      return session_(users, u);
+      const token = session_(users, u);
+      return out_(Object.assign({ ok: true, token }, allPayload_(users, U, u)));
     }
 
     if (a === "signup") {
@@ -414,17 +466,8 @@ function doPost(e) {
         put_(users, u);
         return out_({ ok: true });
 
-      case "all": {
-        const ss = ws_(users, u),
-          data = {};
-        for (const t in DATA) data[t] = rows_(ss.getSheetByName(t));
-        const res = { ok: true, ver: curVer_(u), data, me: pub_(u) };
-        if (master)
-          res.admin = {
-            users: U.filter((r) => r.role !== "master").map(brief_),
-          };
-        return out_(res);
-      }
+      case "all":
+        return out_(Object.assign({ ok: true }, allPayload_(users, U, u)));
 
       case "save": {
         if (!DATA[q.table] || !q.row || !q.row.id) return err_("Bad request");
@@ -453,15 +496,12 @@ function doPost(e) {
           if (!r.id) return;
           const line = h.map((k) => (r[k] === undefined ? "" : r[k]));
           if (!at.has(String(r.id))) adds.push(line);
-          else if (q.upsert)
-            sh.getRange(at.get(String(r.id)), 1, 1, h.length).setValues([line]);
+          else if (q.upsert) writeRows_(sh, at.get(String(r.id)), [line]);
         });
         if (adds.length) {
           const need = sh.getLastRow() + adds.length - sh.getMaxRows();
           if (need > 0) sh.insertRowsAfter(sh.getMaxRows(), need);
-          sh.getRange(sh.getLastRow() + 1, 1, adds.length, h.length).setValues(
-            adds,
-          );
+          writeRows_(sh, sh.getLastRow() + 1, adds);
         }
         bump_(u.id);
         return out_({ ok: true, ver: curVer_(u) });

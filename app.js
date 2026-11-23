@@ -1,6 +1,7 @@
 /* ============ CONFIG ============
    The Apps Script URL lives in config.js (so you never have to edit this file). */
 const API_URL = (window.TP_CONFIG && window.TP_CONFIG.API_URL) || "";
+const NEED_BUILD = "3"; // must match BUILD in Code.gs
 const POLL_MS = 10000;
 const CLASSES = [
   "1",
@@ -90,8 +91,9 @@ const uid = () =>
 const svg = (k) =>
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>`;
 const t12 = (t) => {
-  if (!t) return "";
-  let [h, m] = t.split(":").map(Number);
+  const mm = String(t || "").match(/^(\d{1,2}):(\d{2})/);
+  if (!mm) return "";
+  let [h, m] = [+mm[1], +mm[2]];
   const p = h >= 12 ? "PM" : "AM";
   h = h % 12 || 12;
   return h + ":" + String(m).padStart(2, "0") + " " + p;
@@ -116,6 +118,17 @@ function status(state, txt) {
   $("#syncTxt").textContent = txt;
 }
 
+// Excel libraries are loaded only when needed, so the app itself starts much faster
+const LIBS = { xlsx: ["XLSX", "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"], exceljs: ["ExcelJS", "https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"] };
+function lib(k) {
+  const [g, url] = LIBS[k];
+  if (window[g]) return Promise.resolve(true);
+  return new Promise((res) => {
+    const s = document.createElement("script");
+    s.src = url; s.onload = () => res(true); s.onerror = () => res(false);
+    document.head.appendChild(s);
+  });
+}
 // Small icon button used for every edit / delete / reset action (always placed at the right of its row)
 const icoBtn = (cls, title, onclick, icon) =>
   `<button class="ico ${cls}" title="${title}" aria-label="${title}" onclick="event.stopPropagation();${onclick}">${svg(icon)}</button>`;
@@ -142,16 +155,36 @@ function local(a, p) { // browser-only demo so the interface can be tried withou
   if (["save", "saveMany", "remove", "profile"].includes(a)) { s.ver = String(Date.now()); localStorage.setItem("tuitionpro", JSON.stringify(s)); }
   return Promise.resolve({ ok: true, ver: s.ver, data: s.data, me: s.me, admin: { users: [] } });
 }
-async function load() {
+function applyData(j) {
+  DB = j.data; DB.Batches = DB.Batches || [];
+  ME = j.me; ADMIN = j.admin || { users: [] }; VER = j.ver;
+  PEND = ADMIN.users.filter((x) => x.status === "pending").length;
+  document.body.classList.remove("locked"); $("#login").hidden = true;
+  buildNav(); applyMe(); render(); setBell();
+}
+// Last known data is kept on this device so the app opens instantly, then refreshes quietly in the background.
+function cacheSave() {
+  if (!API_URL || !TOKEN) return;
+  try { localStorage.setItem("tp_cache", JSON.stringify({ data: DB, me: ME, admin: ADMIN, ver: VER })); } catch (e) {}
+}
+function cacheLoad() { try { return JSON.parse(localStorage.getItem("tp_cache") || "null"); } catch (e) { return null; } }
+function showLoader(on, txt) {
+  if (txt) $("#loaderTxt").textContent = txt;
+  $("#loader").classList.toggle("on", on);
+}
+async function load(blocking = true) {
+  if (blocking) showLoader(true, "Loading your data…"); else status("off", "Syncing…");
   try {
     const j = await api("all");
-    DB = j.data; DB.Batches = DB.Batches || [];
-    ME = j.me; ADMIN = j.admin || { users: [] }; VER = j.ver;
-    PEND = ADMIN.users.filter((x) => x.status === "pending").length;
-    document.body.classList.remove("locked"); $("#login").hidden = true;
+    if (API_URL && j.build !== NEED_BUILD) toast("Your Apps Script is out of date. Deploy the latest Code.gs as a new version.");
+    applyData(j); cacheSave();
     status(API_URL ? "" : "off", API_URL ? "Synced" : "Local mode (no backend)");
-    buildNav(); applyMe(); render(); setBell();
-  } catch (e) { if (e.auth) showLogin(); else status("err", "Offline: " + e.message); }
+  } catch (e) {
+    if (e.auth) { showLogin(); return; }
+    status("err", "Offline: " + e.message);
+    if (document.body.classList.contains("locked")) { showLoader(true, "Can't reach the server. Retrying…"); setTimeout(() => load(true), 5000); return; }
+  }
+  showLoader(false);
 }
 async function write(action, p, msg) {
   status("off", "Saving…");
@@ -160,8 +193,9 @@ async function write(action, p, msg) {
     VER = j.ver || VER;
     status(API_URL ? "" : "off", API_URL ? "Saved to Drive" : "Local mode");
     if (msg) toast(msg);
+    cacheSave();
     return true;
-  } catch (e) { status("err", "Save failed"); toast(e.message); if (e.auth) showLogin(); else await load(); return false; }
+  } catch (e) { status("err", "Save failed"); toast(e.message); if (e.auth) showLogin(); else await load(false); return false; }
 }
 async function adminDo(action, p, msg) { // Master Admin actions
   if (!API_URL) { toast("Admin tools need the Apps Script backend"); return false; }
@@ -169,7 +203,7 @@ async function adminDo(action, p, msg) { // Master Admin actions
   try {
     const j = await api(action, p);
     toast(msg + (j.emailed === true ? " - email sent" : j.emailed === false ? " - email could not be sent" : ""));
-    await load();
+    await load(false);
     return true;
   } catch (e) { status("err", "Failed"); toast(e.message); return false; }
 }
@@ -181,7 +215,7 @@ setInterval(async () => { // real-time sharing + sign-up notifications
       if (j.pending > PEND) toast("New sign-up request waiting for approval");
       PEND = j.pending; setBell();
     }
-    if (j.ver !== VER) load();
+    if (j.ver !== VER) load(false);
   } catch (e) { if (e.auth) showLogin(); else status("err", "Offline"); }
 }, POLL_MS);
 
@@ -199,13 +233,15 @@ function setMode(m) {
   $("#ltab_in").classList.toggle("on", !up); $("#ltab_up").classList.toggle("on", up);
 }
 function showLogin() {
-  TOKEN = ""; localStorage.removeItem("tok");
+  TOKEN = ""; localStorage.removeItem("tok"); localStorage.removeItem("tp_cache");
+  showLoader(false);
   document.body.classList.add("locked"); $("#login").hidden = false;
   document.title = "TuitionPro"; setMode("in");
 }
 $("#lf").onsubmit = async (e) => {
   e.preventDefault();
   $("#lerr").textContent = ""; $("#lok").textContent = ""; $("#lbtn").disabled = true;
+  showLoader(true, mode === "up" ? "Sending your request…" : "Signing in…");
   try {
     if (mode === "up") {
       await api("signup", { id: $("#lid").value, pw: $("#lpw").value, name: $("#lname").value, email: $("#lemail").value });
@@ -213,9 +249,11 @@ $("#lf").onsubmit = async (e) => {
       $("#lf").reset();
     } else {
       const j = await api("login", { id: $("#lid").value, pw: $("#lpw").value });
-      TOKEN = j.token; localStorage.setItem("tok", TOKEN); $("#lpw").value = ""; await load();
+      TOKEN = j.token; localStorage.setItem("tok", TOKEN); $("#lpw").value = "";
+      if (j.data) { applyData(j); cacheSave(); status("", "Synced"); } else await load(false); // login already returns the data
     }
   } catch (x) { $("#lerr").textContent = x.message; }
+  showLoader(false);
   $("#lbtn").disabled = false;
 };
 async function logout() {
@@ -389,10 +427,22 @@ async function saveBatch(id) {
   if (!(await write("save", { table: "Batches", row }, old ? "Batch updated" : "Class/batch added"))) return;
   for (let i = 0; i < moved.length; i += 200) await write("saveMany", { table: "Students", rows: moved.slice(i, i + 200), upsert: true }, "");
 }
-async function delBatch(id) {
+function delBatch(id) {
+  const b = DB.Batches.find((x) => x.id === id);
+  if (!b) return;
   const n = DB.Students.filter((s) => s.batchId === id).length;
-  if (n) { toast(`${n} student${n > 1 ? "s are" : " is"} in this batch. Move them to another batch first.`); return; }
-  if (!confirm("Delete this batch?")) return;
+  $("#modal").innerHTML = `<h2>Delete this batch?</h2>
+  <p style="margin-bottom:10px"><b>${esc(bLabel(b))}</b></p>
+  <div class="warnbox">${n ? `<b>${n} student${n > 1 ? "s are" : " is"} in this batch.</b> ${n > 1 ? "They" : "The student"} will not be deleted, but will become <b>Unassigned</b> until you move ${n > 1 ? "them" : "them"} to another batch. ` : ""}This cannot be undone.</div>
+  <label class="full" style="margin-top:12px;display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--mut)">Type <b>Yes</b> to confirm<input class="in" id="d_yes" autocomplete="off" style="color:var(--tx)"></label>
+  <div class="acts"><button class="btn" onclick="closeM()">Cancel</button><button class="btn d" id="d_go" disabled onclick="doDelBatch('${id}')">Delete batch</button></div>`;
+  const ok = () => $("#d_yes").value.trim().toLowerCase() === "yes";
+  $("#d_yes").oninput = () => ($("#d_go").disabled = !ok());
+  $("#d_yes").onkeydown = (e) => { if (e.key === "Enter" && ok()) doDelBatch(id); };
+  $("#ov").classList.add("on");
+  setTimeout(() => $("#d_yes").focus(), 50);
+}
+async function doDelBatch(id) {
   DB.Batches = DB.Batches.filter((b) => b.id !== id);
   closeM();
   render();
@@ -512,7 +562,7 @@ async function delStudent(id) {
   render();
   await write("remove", { table: "Students", id }, "Student deleted");
 }
-function exportXlsx() {
+async function exportXlsx() {
   const L = filtered().map((s) => {
     const b = batchOf(s);
     return {
@@ -530,7 +580,7 @@ function exportXlsx() {
     };
   });
   if (!L.length) { toast("Nothing to export"); return; }
-  if (window.XLSX) {
+  if (await lib("xlsx")) {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(L), "Students");
     XLSX.writeFile(wb, "students.xlsx");
@@ -606,7 +656,7 @@ function impFillBatches() {
 async function impRead(e) {
   const f = e.target.files[0];
   if (!f) return;
-  if (!window.XLSX) { toast("Excel library failed to load. Check your internet connection."); return; }
+  if (!(await lib("xlsx"))) { toast("Excel library failed to load. Check your internet connection."); return; }
   try {
     const wb = XLSX.read(await f.arrayBuffer(), { type: "array", cellDates: true });
     const ws = wb.Sheets["Students"] || wb.Sheets[wb.SheetNames[0]];
@@ -680,7 +730,7 @@ async function doImport() {
   }
 }
 async function downloadTemplate() {
-  if (!window.ExcelJS) { toast("Template library failed to load. Check your internet connection."); return; }
+  if (!(await lib("exceljs"))) { toast("Template library failed to load. Check your internet connection."); return; }
   const B = sortBatches(DB.Batches), used = CLASSES.filter((c) => B.some((b) => b.class === c));
   const defB = $("#i_batch") && DB.Batches.find((b) => b.id === $("#i_batch").value);
   const defC = defB ? defB.class : $("#i_class") ? $("#i_class").value : "";
@@ -889,4 +939,7 @@ if (localStorage.getItem("sbc")) $("#app").classList.add("collapsed");
 route = (location.hash || "#dash").slice(1);
 if (!VIEWS[route]) route = "dash";
 buildNav();
-API_URL && !TOKEN ? showLogin() : load();
+if (API_URL && !TOKEN) showLogin();
+else if (API_URL && cacheLoad()) { applyData(cacheLoad()); showLoader(false); load(false); } // instant start, refresh in background
+else load(true);
+setTimeout(() => { lib("xlsx"); lib("exceljs"); }, 4000); // warm up Excel tools while idle
