@@ -42,6 +42,9 @@ const ICON = {
   res: '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/>',
   pro: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.5-6.5 8-6.5s8 2.5 8 6.5"/>',
   acc: '<path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+  trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/>',
+  key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3"/>',
 };
 const VIEWS = {
   dash: "Dashboard",
@@ -112,6 +115,10 @@ function status(state, txt) {
   $("#syncDot").className = "dot " + (state || "");
   $("#syncTxt").textContent = txt;
 }
+
+// Small icon button used for every edit / delete / reset action (always placed at the right of its row)
+const icoBtn = (cls, title, onclick, icon) =>
+  `<button class="ico ${cls}" title="${title}" aria-label="${title}" onclick="event.stopPropagation();${onclick}">${svg(icon)}</button>`;
 
 /* ============ API (Apps Script) + Local demo mode ============ */
 async function api(action, p = {}) {
@@ -324,10 +331,11 @@ function vDash() {
       const pct = x.list.length ? Math.round(((c.Active || 0) / x.list.length) * 100) : 0;
       return `<div class="glass crow" data-b="${x.b ? esc(x.b.id) : "-"}" onclick="openBatch(this)" title="Open these students">
      <div class="cb"><b>${x.b ? esc(clsLabel(x.b.class)) : "Unassigned"}</b>${x.b && daysTag(x.b) ? `<b class="dy">${daysTag(x.b)}</b>` : ""}</div>
-     <div class="bt">${x.b ? t12(x.b.start) : "No batch"}<small>${x.b ? esc(x.b.section) + ` batch <button class="rowbtn" onclick="event.stopPropagation();editBatch('${esc(x.b.id)}')">Edit</button>` : "Edit these students to assign a batch"}</small></div>
+     <div class="bt">${x.b ? t12(x.b.start) : "No batch"}<small>${x.b ? esc(x.b.section) + " batch" : "Edit these students to assign a batch"}</small></div>
      <div class="cnt"><b>${x.list.length}</b> students</div>
      <div class="pills">${STATUSES.filter((s) => c[s]).map((s) => `<span class="chip s-${s}">${c[s]} ${s}</span>`).join("")}</div>
-     <div class="pr"><div><i style="width:${pct}%"></i></div><small>${pct}% active</small></div></div>`;
+     <div class="pr"><div><i style="width:${pct}%"></i></div><small>${pct}% active</small></div>
+     <div class="ra">${x.b ? icoBtn("", "Edit class / batch", `editBatch('${esc(x.b.id)}')`, "edit") + icoBtn("del", "Delete batch", `delBatch('${esc(x.b.id)}')`, "trash") : ""}</div></div>`;
     }).join("") ||
     `<div class="glass empty">No classes yet. Use <b>Add Class/Batch</b> above, then add your students.</div>`
   }</div>`;
@@ -353,7 +361,7 @@ function editBatch(id) {
     <div class="days" id="b_days">${DAYS.map(([c, , n]) => `<label class="chk"><input type="checkbox" value="${c}" ${cur.has(c) ? "checked" : ""}><span>${n}</span></label>`).join("")}</div></div>
    <label class="full">Batch name (automatic)<input class="in" id="b_name" readonly placeholder="Choose a start time and days"></label>
   </div>
-  <div class="acts" style="justify-content:space-between">${e ? `<button class="btn d" onclick="delBatch('${e.id}')">Delete batch</button>` : "<span></span>"}
+  <div class="acts" style="justify-content:space-between">${e ? icoBtn("del", "Delete batch", `delBatch('${e.id}')`, "trash") : "<span></span>"}
    <span style="display:flex;gap:8px"><button class="btn" onclick="closeM()">Cancel</button><button class="btn p" onclick="saveBatch('${e ? e.id : ""}')">${e ? "Save changes" : "Save batch"}</button></span></div>`;
   const upd = () => ($("#b_name").value = batchName($("#b_class").value, $("#b_section").value, $("#b_start").value, pickedDays()));
   ["b_class", "b_section", "b_start"].forEach((k) => ($("#" + k).oninput = upd));
@@ -431,7 +439,7 @@ function rows() {
     L.map((s) => {
       const b = batchOf(s);
       return `<tr><td><b>${esc(s.sid)}</b></td><td>${esc(s.name)}</td><td>${esc(clsLabel(stuClass(s)))}</td><td>${b ? esc(b.section) + " " + t12(b.start) + " " + daysTag(b) : "Unassigned"}</td><td>${esc(s.guardian)}</td><td>${esc(s.phone)}</td><td>${esc(s.fee)}</td><td><span class="chip s-${esc(s.status)}">${esc(s.status)}</span></td>
-   <td style="text-align:right"><button class="rowbtn" onclick="editStudent('${s.id}')">Edit</button><button class="rowbtn" onclick="delStudent('${s.id}')">Delete</button></td></tr>`;
+   <td style="text-align:right"><span class="ra">${icoBtn("", "Edit student", `editStudent('${s.id}')`, "edit")}${icoBtn("del", "Delete student", `delStudent('${s.id}')`, "trash")}</span></td></tr>`;
     }).join("") ||
     `<tr><td colspan="9"><div class="empty">No students match. Clear the filters or use Add student.</div></td></tr>`;
 }
@@ -838,7 +846,7 @@ function vAdmin() {
   <div class="glass pad"><h3>All users (${O.length})</h3><div class="rows">${
     O.map((x) => `<div class="acc glass"><div class="av">${init(x.name)}</div>
      <div style="flex:1;min-width:0"><b>${esc(x.name)}</b><br><small class="mut">@${esc(x.id)}</small></div><span class="chip s-${esc(x.status)}">${esc(x.status)}</span>
-     <button class="rowbtn" onclick="resetU('${esc(x.id)}')">Reset password</button><button class="rowbtn" onclick="removeU('${esc(x.id)}')">Remove</button></div>`).join("") ||
+     <span class="ra">${icoBtn("", "Reset password", `resetU('${esc(x.id)}')`, "key")}${icoBtn("del", "Remove user", `removeU('${esc(x.id)}')`, "trash")}</span></div>`).join("") ||
     '<div class="empty">No users yet.</div>'}</div></div></div>`;
 }
 const approveU = (id) => adminDo("approve", { id }, "Approved and workspace created");

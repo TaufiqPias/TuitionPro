@@ -497,7 +497,7 @@ textarea {
 }
 .crow {
   display: grid;
-  grid-template-columns: minmax(128px, 270px) 176px 96px 1fr 120px;
+  grid-template-columns: minmax(128px, 270px) 176px 96px 1fr 120px auto;
   gap: 12px;
   align-items: center;
   padding: 11px 14px;
@@ -954,8 +954,8 @@ tr:hover td {
     right: 44px;
   }
   .crow {
-    grid-template-columns: auto 1fr auto;
-    grid-template-areas: "cb bt cnt" "pills pills pills" "pr pr pr";
+    grid-template-columns: auto 1fr auto auto;
+    grid-template-areas: "cb bt cnt ra" "pills pills pills pills" "pr pr pr pr";
     gap: 8px 10px;
   }
   .crow .cb {
@@ -1035,3 +1035,12 @@ tr:hover td {
 @media (hover: hover) { .f label.chk:hover { transform: scale(1.03); } }
 .crow .cb { display: flex; gap: 6px; flex-wrap: wrap; }
 .crow .cb b.dy { background: var(--ac2); font-size: 12px; }
+
+/* Icon buttons (edit / delete / reset) - always at the right end of a row */
+.ra { display: inline-flex; gap: 6px; justify-content: flex-end; align-items: center; }
+.ico { width: 32px; height: 32px; padding: 0; border-radius: 9px; border: 1px solid var(--bd); background: var(--inp); color: var(--mut); display: inline-grid; place-items: center; cursor: pointer; flex: none; transition: transform 0.22s cubic-bezier(0.2, 0.7, 0.3, 1), color 0.2s, border-color 0.2s, background 0.2s; }
+.ico svg { width: 16px; height: 16px; }
+.ico:hover { color: var(--ac); border-color: var(--ac); }
+.ico.del:hover { color: var(--bad); border-color: var(--bad); }
+@media (hover: hover) { .ico:hover { transform: scale(1.03); } }
+@media (max-width: 820px) { .crow .ra { grid-area: ra; } }
