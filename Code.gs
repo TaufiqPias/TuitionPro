@@ -37,7 +37,7 @@ const DATA = {
     "updated",
     "roll",
   ],
-  Batches: ["id", "class", "section", "name", "start"],
+  Batches: ["id", "class", "section", "name", "start", "days"],
   Attendance: ["id", "date", "studentId", "status"],
   Fees: ["id", "studentId", "month", "amount", "paid", "date"],
   Results: ["id", "studentId", "exam", "subject", "marks", "total"],
@@ -76,6 +76,7 @@ const PROFILE = [
   "photo",
 ];
 const DAY = 864e5;
+const SCHEMA = "2"; // bump when a table gains a column; existing user sheets are upgraded automatically
 
 /* ---------- small helpers ---------- */
 const P_ = () => PropertiesService.getScriptProperties();
@@ -144,6 +145,21 @@ function del_(sh, id) {
     .indexOf(String(id));
   if (at >= 0) sh.deleteRow(at + 2);
 }
+function ensureCols_(sh, cols) {
+  // adds any missing columns to an older sheet
+  const h = sh
+    .getRange(1, 1, 1, Math.max(1, sh.getLastColumn()))
+    .getValues()[0];
+  cols
+    .filter((c) => h.indexOf(c) < 0)
+    .forEach((c) => {
+      const col = sh.getLastColumn() + 1;
+      sh.getRange(1, col).setValue(c);
+      sh.getRange(2, col, Math.max(1, sh.getMaxRows() - 1), 1).setNumberFormat(
+        "@",
+      );
+    });
+}
 function initSheet_(sh, cols) {
   sh.getRange(1, 1, 1, cols.length).setValues([cols]);
   sh.setFrozenRows(1);
@@ -190,12 +206,19 @@ function ws_(users, u) {
     put_(users, u);
   }
   let first = ss.getSheetByName("Sheet1");
+  const key = "S_" + ss.getId(),
+    migrate = P_().getProperty(key) !== SCHEMA;
   for (const t in DATA) {
-    if (ss.getSheetByName(t)) continue;
+    const have = ss.getSheetByName(t);
+    if (have) {
+      if (migrate) ensureCols_(have, DATA[t]);
+      continue;
+    }
     const sh = first ? first.setName(t) : ss.insertSheet(t);
     first = null;
     initSheet_(sh, DATA[t]);
   }
+  if (migrate) P_().setProperty(key, SCHEMA);
   return ss;
 }
 
@@ -411,28 +434,33 @@ function doPost(e) {
       }
 
       case "saveMany": {
-        // bulk insert (imports); skips ids that already exist
+        // bulk insert (imports) or bulk update when upsert is true
         if (!DATA[q.table] || !Array.isArray(q.rows) || q.rows.length > 500)
           return err_("Bad import request");
         const sh = ws_(users, u).getSheetByName(q.table);
         const h = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
-        const have = new Set(
+        const ids =
           sh.getLastRow() < 2
             ? []
             : sh
                 .getRange(2, 1, sh.getLastRow() - 1, 1)
                 .getValues()
                 .flat()
-                .map(String),
-        );
-        const lines = q.rows
-          .filter((r) => r.id && !have.has(String(r.id)))
-          .map((r) => h.map((k) => (r[k] === undefined ? "" : r[k])));
-        if (lines.length) {
-          const need = sh.getLastRow() + lines.length - sh.getMaxRows();
+                .map(String);
+        const at = new Map(ids.map((v, i) => [v, i + 2]));
+        const adds = [];
+        q.rows.forEach((r) => {
+          if (!r.id) return;
+          const line = h.map((k) => (r[k] === undefined ? "" : r[k]));
+          if (!at.has(String(r.id))) adds.push(line);
+          else if (q.upsert)
+            sh.getRange(at.get(String(r.id)), 1, 1, h.length).setValues([line]);
+        });
+        if (adds.length) {
+          const need = sh.getLastRow() + adds.length - sh.getMaxRows();
           if (need > 0) sh.insertRowsAfter(sh.getMaxRows(), need);
-          sh.getRange(sh.getLastRow() + 1, 1, lines.length, h.length).setValues(
-            lines,
+          sh.getRange(sh.getLastRow() + 1, 1, adds.length, h.length).setValues(
+            adds,
           );
         }
         bump_(u.id);

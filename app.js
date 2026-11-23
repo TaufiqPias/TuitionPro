@@ -129,7 +129,7 @@ function local(a, p) { // browser-only demo so the interface can be tried withou
     ver: "0",
   };
   if (a === "save") { const l = (s.data[p.table] = s.data[p.table] || []), i = l.findIndex((x) => x.id === p.row.id); i < 0 ? l.push(p.row) : (l[i] = p.row); }
-  if (a === "saveMany") { const l = (s.data[p.table] = s.data[p.table] || []); p.rows.forEach((r) => l.push(r)); }
+  if (a === "saveMany") { const l = (s.data[p.table] = s.data[p.table] || []); p.rows.forEach((r) => { const i = l.findIndex((x) => x.id === r.id); i < 0 ? l.push(r) : p.upsert && (l[i] = r); }); }
   if (a === "remove") s.data[p.table] = s.data[p.table].filter((x) => x.id !== p.id);
   if (a === "profile") Object.assign(s.me, p.fields);
   if (["save", "saveMany", "remove", "profile"].includes(a)) { s.ver = String(Date.now()); localStorage.setItem("tuitionpro", JSON.stringify(s)); }
@@ -264,8 +264,17 @@ const SEC_SHORT = { Morning: "Mor", Afternoon: "Aft", Evening: "Eve" };
 const SEC_CODE = { Morning: "M", Afternoon: "A", Evening: "E" };
 const CLS_CODE = { "SSC Final": "CSF", "HSC Final": "CHF", Admission: "CAD", "Exam Batch": "CEB" };
 const clsCode = (c) => CLS_CODE[c] || "C" + c;
-const batchName = (c, sec, st) =>
-  st ? `${clsLabel(c)} ${SEC_SHORT[sec] || ""} ${t12(st)}`.replace(/\s+/g, " ") : "";
+// Batch days, Saturday first. Letters feed the name suffix, codes feed the dashboard badge.
+const DAYS = [["SAT", "S", "Saturday"], ["SUN", "S", "Sunday"], ["MON", "M", "Monday"], ["TUE", "T", "Tuesday"], ["WED", "W", "Wednesday"], ["THU", "T", "Thursday"], ["FRI", "F", "Friday"]];
+const dayCodes = (b) => String(b.days || "").split(",").filter(Boolean);
+const daysTag = (b) => (dayCodes(b).length ? "[" + dayCodes(b).join("/") + "]" : "");
+const daysSuffix = (codes) => (codes.length ? " -[" + codes.map((c) => DAYS.find((d) => d[0] === c)[1]).join("/") + "]" : "");
+const batchName = (c, sec, st, codes = []) =>
+  st ? `${clsLabel(c)} ${SEC_SHORT[sec] || ""} ${t12(st)}`.replace(/\s+/g, " ") + daysSuffix(codes) : "";
+// Saturday/Sunday are both "S" (and Tuesday/Thursday both "T"), so two batches can share a name.
+// Dropdowns and imports then add the full day codes to keep every choice unique.
+const bLabel = (b) =>
+  dayCodes(b).length && DB.Batches.filter((x) => x.name === b.name).length > 1 ? `${b.name} (${dayCodes(b).join("/")})` : b.name;
 const batchOf = (s) => DB.Batches.find((b) => b.id === s.batchId);
 const stuClass = (s) => (batchOf(s) || s).class;
 const sortBatches = (L) =>
@@ -273,7 +282,8 @@ const sortBatches = (L) =>
     (a, b) =>
       CLASSES.indexOf(a.class) - CLASSES.indexOf(b.class) ||
       SECTIONS.indexOf(a.section) - SECTIONS.indexOf(b.section) ||
-      String(a.start).localeCompare(String(b.start)),
+      String(a.start).localeCompare(String(b.start)) ||
+      String(a.days || "").localeCompare(String(b.days || "")),
   );
 function instInitials() {
   const w = (ME.name || "").match(/[\p{L}\p{N}]+/gu) || [];
@@ -313,8 +323,8 @@ function vDash() {
       x.list.forEach((s) => (c[s.status] = (c[s.status] || 0) + 1));
       const pct = x.list.length ? Math.round(((c.Active || 0) / x.list.length) * 100) : 0;
       return `<div class="glass crow" data-b="${x.b ? esc(x.b.id) : "-"}" onclick="openBatch(this)" title="Open these students">
-     <div class="cb"><b>${x.b ? esc(clsLabel(x.b.class)) : "Unassigned"}</b></div>
-     <div class="bt">${x.b ? t12(x.b.start) : "No batch"}<small>${x.b ? esc(x.b.section) + " batch" : "Edit these students to assign a batch"}</small></div>
+     <div class="cb"><b>${x.b ? esc(clsLabel(x.b.class)) : "Unassigned"}</b>${x.b && daysTag(x.b) ? `<b class="dy">${daysTag(x.b)}</b>` : ""}</div>
+     <div class="bt">${x.b ? t12(x.b.start) : "No batch"}<small>${x.b ? esc(x.b.section) + ` batch <button class="rowbtn" onclick="event.stopPropagation();editBatch('${esc(x.b.id)}')">Edit</button>` : "Edit these students to assign a batch"}</small></div>
      <div class="cnt"><b>${x.list.length}</b> students</div>
      <div class="pills">${STATUSES.filter((s) => c[s]).map((s) => `<span class="chip s-${s}">${c[s]} ${s}</span>`).join("")}</div>
      <div class="pr"><div><i style="width:${pct}%"></i></div><small>${pct}% active</small></div></div>`;
@@ -330,33 +340,55 @@ function openBatch(el) {
   go("students");
 }
 
-/* ============ CLASS / BATCH MODAL ============ */
-function editBatch() {
-  $("#modal").innerHTML = `<h2>Add class / batch</h2>
+/* ============ CLASS / BATCH MODAL (add + edit) ============ */
+const pickedDays = () => [...document.querySelectorAll("#b_days input:checked")].map((i) => i.value);
+function editBatch(id) {
+  const e = DB.Batches.find((b) => b.id === id), cur = new Set(e ? dayCodes(e) : []);
+  $("#modal").innerHTML = `<h2>${e ? "Edit class / batch" : "Add class / batch"}</h2>
   <div class="f">
-   <label>Class<select class="in" id="b_class">${CLASSES.map((c) => `<option value="${esc(c)}" ${F.cls === c ? "selected" : ""}>${esc(clsLabel(c))}</option>`).join("")}</select></label>
-   <label>Section<select class="in" id="b_section">${SECTIONS.map((s) => `<option>${s}</option>`).join("")}</select></label>
-   <label>Batch starts<input class="in" id="b_start" type="time"></label>
-   <label>Batch name (automatic)<input class="in" id="b_name" readonly placeholder="Choose a start time"></label>
+   <label>Class<select class="in" id="b_class">${CLASSES.map((c) => `<option value="${esc(c)}" ${(e ? e.class : F.cls) === c ? "selected" : ""}>${esc(clsLabel(c))}</option>`).join("")}</select></label>
+   <label>Section<select class="in" id="b_section">${SECTIONS.map((s) => `<option ${e && e.section === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
+   <label class="full">Batch starts<input class="in" id="b_start" type="time" value="${e ? esc(e.start) : ""}"></label>
+   <div class="full"><div class="lbl">Batch days (choose one or more)</div>
+    <div class="days" id="b_days">${DAYS.map(([c, , n]) => `<label class="chk"><input type="checkbox" value="${c}" ${cur.has(c) ? "checked" : ""}><span>${n}</span></label>`).join("")}</div></div>
+   <label class="full">Batch name (automatic)<input class="in" id="b_name" readonly placeholder="Choose a start time and days"></label>
   </div>
-  <div class="acts"><button class="btn" onclick="closeM()">Cancel</button><button class="btn p" onclick="saveBatch()">Save batch</button></div>`;
-  const upd = () => ($("#b_name").value = batchName($("#b_class").value, $("#b_section").value, $("#b_start").value));
+  <div class="acts" style="justify-content:space-between">${e ? `<button class="btn d" onclick="delBatch('${e.id}')">Delete batch</button>` : "<span></span>"}
+   <span style="display:flex;gap:8px"><button class="btn" onclick="closeM()">Cancel</button><button class="btn p" onclick="saveBatch('${e ? e.id : ""}')">${e ? "Save changes" : "Save batch"}</button></span></div>`;
+  const upd = () => ($("#b_name").value = batchName($("#b_class").value, $("#b_section").value, $("#b_start").value, pickedDays()));
   ["b_class", "b_section", "b_start"].forEach((k) => ($("#" + k).oninput = upd));
+  document.querySelectorAll("#b_days input").forEach((i) => (i.onchange = upd));
+  upd();
   $("#ov").classList.add("on");
   setTimeout(() => $("#b_start").focus(), 50);
 }
-async function saveBatch() {
-  const c = $("#b_class").value, sec = $("#b_section").value, st = $("#b_start").value;
+async function saveBatch(id) {
+  const c = $("#b_class").value, sec = $("#b_section").value, st = $("#b_start").value, codes = pickedDays();
   if (!st) { toast("Choose the batch start time"); return; }
-  if (DB.Batches.some((b) => b.class === c && b.section === sec && b.start === st)) {
-    toast("This class, section and start time already exists");
+  if (!codes.length) { toast("Select at least one batch day"); return; }
+  const days = codes.join(","), name = batchName(c, sec, st, codes);
+  if (DB.Batches.some((b) => b.id !== id && b.class === c && b.section === sec && b.start === st && (b.days || "") === days)) {
+    toast("This class, section, time and days already exists");
     return;
   }
-  const row = { id: uid(), class: c, section: sec, start: st, name: batchName(c, sec, st) };
-  DB.Batches.push(row);
+  const row = { id: id || uid(), class: c, section: sec, start: st, days, name };
+  const old = DB.Batches.find((b) => b.id === id);
+  old ? Object.assign(old, row) : DB.Batches.push(row);
+  // keep the readable copies stored on each student in step with the batch
+  const moved = old ? DB.Students.filter((s) => s.batchId === id).map((s) => Object.assign(s, { class: c, section: sec, batch: name })) : [];
   closeM();
   render();
-  await write("save", { table: "Batches", row }, "Class/batch added");
+  if (!(await write("save", { table: "Batches", row }, old ? "Batch updated" : "Class/batch added"))) return;
+  for (let i = 0; i < moved.length; i += 200) await write("saveMany", { table: "Students", rows: moved.slice(i, i + 200), upsert: true }, "");
+}
+async function delBatch(id) {
+  const n = DB.Students.filter((s) => s.batchId === id).length;
+  if (n) { toast(`${n} student${n > 1 ? "s are" : " is"} in this batch. Move them to another batch first.`); return; }
+  if (!confirm("Delete this batch?")) return;
+  DB.Batches = DB.Batches.filter((b) => b.id !== id);
+  closeM();
+  render();
+  await write("remove", { table: "Batches", id }, "Batch deleted");
 }
 
 /* ============ STUDENTS ============ */
@@ -376,7 +408,7 @@ function vStudents() {
   <div class="glass tools">
    <input class="in grow" id="fq" placeholder="Search name, student ID, guardian, phone" value="${esc(F.q)}">
    <select class="in" id="fc"><option value="">All classes</option>${CLASSES.map((c) => `<option ${F.cls === c ? "selected" : ""} value="${esc(c)}">${esc(clsLabel(c))}</option>`).join("")}</select>
-   <select class="in" id="fb"><option value="">All batches</option>${B.map((b) => `<option ${F.batch === b.id ? "selected" : ""} value="${esc(b.id)}">${esc(b.name)}</option>`).join("")}${hasUn ? `<option value="-" ${F.batch === "-" ? "selected" : ""}>Unassigned</option>` : ""}</select>
+   <select class="in" id="fb"><option value="">All batches</option>${B.map((b) => `<option ${F.batch === b.id ? "selected" : ""} value="${esc(b.id)}">${esc(bLabel(b))}</option>`).join("")}${hasUn ? `<option value="-" ${F.batch === "-" ? "selected" : ""}>Unassigned</option>` : ""}</select>
    <select class="in" id="fs"><option value="">All status</option>${STATUSES.map((c) => `<option ${F.st === c ? "selected" : ""}>${c}</option>`).join("")}</select>
    <button class="btn" onclick="exportXlsx()">Export Excel</button>
   </div>
@@ -398,7 +430,7 @@ function rows() {
   $("#tb").innerHTML =
     L.map((s) => {
       const b = batchOf(s);
-      return `<tr><td><b>${esc(s.sid)}</b></td><td>${esc(s.name)}</td><td>${esc(clsLabel(stuClass(s)))}</td><td>${b ? esc(b.section) + " " + t12(b.start) : "Unassigned"}</td><td>${esc(s.guardian)}</td><td>${esc(s.phone)}</td><td>${esc(s.fee)}</td><td><span class="chip s-${esc(s.status)}">${esc(s.status)}</span></td>
+      return `<tr><td><b>${esc(s.sid)}</b></td><td>${esc(s.name)}</td><td>${esc(clsLabel(stuClass(s)))}</td><td>${b ? esc(b.section) + " " + t12(b.start) + " " + daysTag(b) : "Unassigned"}</td><td>${esc(s.guardian)}</td><td>${esc(s.phone)}</td><td>${esc(s.fee)}</td><td><span class="chip s-${esc(s.status)}">${esc(s.status)}</span></td>
    <td style="text-align:right"><button class="rowbtn" onclick="editStudent('${s.id}')">Edit</button><button class="rowbtn" onclick="delStudent('${s.id}')">Delete</button></td></tr>`;
     }).join("") ||
     `<tr><td colspan="9"><div class="empty">No students match. Clear the filters or use Add student.</div></td></tr>`;
@@ -412,7 +444,7 @@ function editStudent(id) {
   $("#modal").innerHTML = `<h2>${id ? "Edit student" : "Add student"}</h2>
   <div class="f">
    <label class="full">Full name<input class="in" id="m_name" value="${v("name")}"></label>
-   <label class="full">Assign Class &amp; Batch<select class="in" id="m_batch"><option value="">Select class &amp; batch</option>${B.map((b) => `<option value="${esc(b.id)}" ${cur === b.id ? "selected" : ""}>${esc(b.name)}</option>`).join("")}</select></label>
+   <label class="full">Assign Class &amp; Batch<select class="in" id="m_batch"><option value="">Select class &amp; batch</option>${B.map((b) => `<option value="${esc(b.id)}" ${cur === b.id ? "selected" : ""}>${esc(bLabel(b))}</option>`).join("")}</select></label>
    <label>Student ID (automatic)<input class="in" id="m_sid" readonly value="${v("sid")}" placeholder="Pick a batch"></label>
    <label>Joined<input class="in" id="m_joined" type="date" value="${s.joined || new Date().toISOString().slice(0, 10)}"></label>
    <label>Status<select class="in" id="m_status">${STATUSES.map((c) => `<option ${s.status === c ? "selected" : ""}>${c}</option>`).join("")}</select></label>
@@ -480,7 +512,8 @@ function exportXlsx() {
       Name: s.name,
       Class: stuClass(s),
       Section: b ? b.section : "",
-      Batch: b ? b.name : "",
+      Batch: b ? bLabel(b) : "",
+      "Batch days": b ? dayCodes(b).join("/") : "",
       Guardian: s.guardian,
       Phone: s.phone,
       "Monthly/Course Fee": s.fee,
@@ -559,7 +592,7 @@ function importModal() {
 function impFillBatches() {
   const c = $("#i_class").value, keep = $("#i_batch").value;
   const L = sortBatches(DB.Batches).filter((b) => !c || b.class === c);
-  $("#i_batch").innerHTML = `<option value="">Select batch</option>` + L.map((b) => `<option value="${esc(b.id)}" ${b.id === keep ? "selected" : ""}>${esc(b.name)}</option>`).join("");
+  $("#i_batch").innerHTML = `<option value="">Select batch</option>` + L.map((b) => `<option value="${esc(b.id)}" ${b.id === keep ? "selected" : ""}>${esc(bLabel(b))}</option>`).join("");
   if (c && L.length === 1) $("#i_batch").value = L[0].id;
 }
 async function impRead(e) {
@@ -584,7 +617,7 @@ async function impRead(e) {
 function impResolve() {
   const defB = DB.Batches.find((b) => b.id === $("#i_batch").value);
   const clsMap = {}; CLASSES.forEach((c) => (clsMap[nk(c)] = c));
-  const batchMap = {}; DB.Batches.forEach((b) => (batchMap[nk(b.name)] = b));
+  const batchMap = {}; DB.Batches.forEach((b) => (batchMap[nk(bLabel(b))] = b));
   const ok = [], errs = []; let dups = 0;
   const seen = new Set(DB.Students.map((s) => s.batchId + "|" + nk(s.name) + "|" + nk(s.phone)));
   IMP.raw.forEach((r, i) => {
@@ -648,7 +681,7 @@ async function downloadTemplate() {
   const help = wb.addWorksheet("How to use");
   const ls = wb.addWorksheet("Lists", { state: "hidden" });
   used.forEach((c, i) => (ls.getCell(i + 1, 1).value = c));
-  B.forEach((b, i) => (ls.getCell(i + 1, 2).value = b.name));
+  B.forEach((b, i) => (ls.getCell(i + 1, 2).value = bLabel(b)));
   [["Name", 28], ["Class", 14], ["Batch", 26], ["Guardian", 22], ["Phone", 16], ["Monthly/Course Fee", 20], ["Status", 12], ["Joined", 14]].forEach(([h, w], i) => {
     ws.getColumn(i + 1).width = w;
     const c = ws.getCell(1, i + 1); c.value = h; c.font = { bold: true };
@@ -658,7 +691,7 @@ async function downloadTemplate() {
   for (let r = 2; r <= N + 1; r++) {
     ws.getCell(r, 5).numFmt = "@"; ws.getCell(r, 8).numFmt = "yyyy-mm-dd";
     if (defC) ws.getCell(r, 2).value = defC;
-    if (defB) ws.getCell(r, 3).value = defB.name;
+    if (defB) ws.getCell(r, 3).value = bLabel(defB);
   }
   const dv = (rng, o) => ws.dataValidations.add(rng, { allowBlank: true, showErrorMessage: true, errorStyle: "stop", ...o });
   dv(`B2:B${N + 1}`, { type: "list", formulae: [`Lists!$A$1:$A$${used.length}`], errorTitle: "Class", error: "Choose a class from the list." });

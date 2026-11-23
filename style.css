@@ -497,7 +497,7 @@ textarea {
 }
 .crow {
   display: grid;
-  grid-template-columns: 128px 168px 96px 1fr 120px;
+  grid-template-columns: minmax(128px, 270px) 176px 96px 1fr 120px;
   gap: 12px;
   align-items: center;
   padding: 11px 14px;
@@ -1025,3 +1025,13 @@ tr:hover td {
 .bell i { position: absolute; top: -5px; right: -5px; min-width: 17px; height: 17px; border-radius: 9px; font-size: 10px; line-height: 17px; padding: 0 4px; }
 .nb { margin-left: auto; font-size: 11px; border-radius: 10px; padding: 0 6px; min-width: 18px; }
 .bell[hidden], .bell i[hidden], .nb[hidden] { display: none; }
+
+/* Batch days: checklist + dashboard badge */
+.lbl { font-size: 12px; color: var(--mut); margin-bottom: 4px; }
+.days { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 6px; }
+.f label.chk { flex-direction: row; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 10px; border: 1px solid var(--bd); background: var(--inp); cursor: pointer; color: var(--tx); font-size: 13px; font-weight: 500; transition: transform 0.22s, border-color 0.2s, background 0.2s; }
+.f label.chk:has(input:checked) { border-color: var(--ac); background: color-mix(in srgb, var(--ac) 16%, transparent); }
+.chk input { accent-color: var(--ac); width: 16px; height: 16px; }
+@media (hover: hover) { .f label.chk:hover { transform: scale(1.03); } }
+.crow .cb { display: flex; gap: 6px; flex-wrap: wrap; }
+.crow .cb b.dy { background: var(--ac2); font-size: 12px; }
