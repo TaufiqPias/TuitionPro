@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>TuitionPro</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+  </head>
+  <body data-theme="ocean" class="locked">
+    <!-- Sign in / sign up -->
+    <div class="login" id="login" hidden>
+      <form class="lcard glass" id="lf" autocomplete="on">
+        <div class="logo big">T</div>
+        <h2 id="lh">Sign in</h2>
+        <p class="mut" id="lsub">Use your TuitionPro ID to continue.</p>
+        <div class="ltabs">
+          <button type="button" id="ltab_in" class="on" onclick="setMode('in')">Sign in</button>
+          <button type="button" id="ltab_up" onclick="setMode('up')">Sign up</button>
+        </div>
+        <label id="lnamew" hidden>Institute or trainer name<input class="in" id="lname" autocomplete="organization" /></label>
+        <label id="lemailw" hidden>Email<input class="in" id="lemail" type="email" autocomplete="email" /></label>
+        <label>ID<input class="in" id="lid" autocomplete="username" autocapitalize="none" required /></label>
+        <label>Password<input class="in" id="lpw" type="password" autocomplete="current-password" required /></label>
+        <div class="lerr" id="lerr"></div>
+        <div class="lok" id="lok"></div>
+        <button class="btn p wide" id="lbtn" type="submit">Sign in</button>
+      </form>
+    </div>
+
+    <div class="app" id="app">
+      <div class="mscrim" onclick="toggleSb()"></div>
+      <aside class="sb glass">
+        <div class="brand">
+          <div class="logo" id="logoBox">T</div>
+          <div>
+            <div class="bname" id="instName">TuitionPro</div>
+            <div class="bsub">TuitionPro</div>
+          </div>
+        </div>
+        <nav class="nav" id="nav"></nav>
+        <div class="sbfoot">
+          <i class="dot" id="syncDot"></i><span id="syncTxt">Starting…</span>
+        </div>
+      </aside>
+      <section class="main">
+        <header class="top glass">
+          <button class="ib" onclick="toggleSb()" title="Menu">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            >
+              <path d="M4 6h16M4 12h16M4 18h10" />
+            </svg>
+          </button>
+          <h1 id="title">Dashboard</h1>
+          <button class="btn" id="importBtn" onclick="importModal()">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><span class="long">Import Students</span
+            ><span class="short">Import</span>
+          </button>
+          <button class="btn p" id="addBtn" onclick="editStudent()">
+            <b>+</b><span class="long">Add student</span
+            ><span class="short">Add</span>
+          </button>
+          <button class="btn" id="addBatchBtn" onclick="editBatch()">
+            <b>+</b><span class="long">Add Class/Batch</span
+            ><span class="short">Batch</span>
+          </button>
+          <button class="ib bell" id="bell" onclick="go('admin')" title="Sign-up requests" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8M13.7 20a2 2 0 0 1-3.4 0"/></svg>
+            <i id="bellN" hidden>0</i>
+          </button>
+          <button class="ib" onclick="togglePop(event, 'pop')" title="Themes">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+            >
+              <circle cx="12" cy="12" r="9" />
+              <circle cx="8.5" cy="10" r="1" fill="currentColor" />
+              <circle cx="12" cy="7.5" r="1" fill="currentColor" />
+              <circle cx="15.5" cy="10" r="1" fill="currentColor" />
+              <path d="M12 21a2.5 2.5 0 0 1 0-5h1.5" />
+            </svg>
+          </button>
+          <button
+            class="ib avbtn"
+            id="avBtn"
+            onclick="togglePop(event, 'upop')"
+            title="Account"
+          >
+            T
+          </button>
+        </header>
+        <div class="pop glass" id="pop">
+          <div class="ph">Theme</div>
+          <div class="sw" id="sw"></div>
+        </div>
+        <div class="pop glass" id="upop"></div>
+        <div class="view" id="view"></div>
+      </section>
+    </div>
+
+    <div class="ov" id="ov"><div class="modal glass" id="modal"></div></div>
+    <div class="toast" id="toast"></div>
+    <input type="file" id="imgFile" accept="image/*" hidden />
+    <div class="copy">© Taufiq Pias (WolfSoft)</div>
+
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
