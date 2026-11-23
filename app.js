@@ -968,6 +968,16 @@ function vSoon() {
     `<div class="glass pad empty"><h3 style="font-size:16px;color:var(--tx)">${VIEWS[route]} comes in the next step</h3><p>${t[0]}.</p><p>${t[1]}.</p></div>`;
 }
 
+/* ============ WATERMARK (inline SVG so it can follow the theme colours) ============ */
+fetch("watermark.svg")
+  .then((r) => (r.ok ? r.text() : ""))
+  .then((t) => {
+    if (!t) return;
+    t = t.replace(/<\?xml[\s\S]*?\?>/, "").replace(/<style>[\s\S]*?<\/style>/, "").replace(/<title>[\s\S]*?<\/title>/, "").replace(/\sid="[^"]*"/g, "");
+    document.querySelectorAll(".wm").forEach((w) => (w.innerHTML = t));
+  })
+  .catch(() => {});
+
 /* ============ INIT ============ */
 $("#sw").innerHTML = Object.entries(THEMES)
   .map(

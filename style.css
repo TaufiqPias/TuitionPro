@@ -1058,3 +1058,19 @@ tr:hover td {
 @media (prefers-reduced-motion: reduce) { .ld .ring, .ld .lt { animation: none; } }
 /* Delete confirmation */
 .warnbox { padding: 10px 12px; border-radius: 10px; background: #dc262615; border: 1px solid #dc262640; font-size: 13px; line-height: 1.5; }
+
+/* Watermark: sits between the page background and the dashboard, recoloured by the active theme, 65% transparent */
+.wm { position: absolute; inset: 0; z-index: 0; display: grid; place-items: center; pointer-events: none; opacity: 0.35; overflow: hidden;
+  --wd: var(--tx); --wl: var(--bg1); }
+[data-theme="midnight"] .wm, [data-theme="forest"] .wm { --wd: color-mix(in srgb, var(--ac) 28%, var(--bg1)); --wl: var(--tx); }
+.wm svg { width: min(64%, 62vh, 560px); height: auto; aspect-ratio: 1; }
+.wm .cls-1 { fill: var(--ac2); }
+.wm .cls-2 { fill: var(--wd); }
+.wm .cls-3 { fill: var(--ac); }
+.wm .cls-4 { fill: var(--wl); }
+.wm .cls-5 { fill: var(--wl); stroke: var(--wl); stroke-miterlimit: 10; }
+.wm .cls-6 { fill: var(--wl); }
+.main > .top, .main > .view { position: relative; z-index: 1; }
+.login .wm { position: absolute; z-index: 0; }
+.login .lcard { position: relative; z-index: 1; }
+@media (max-width: 820px) { .wm svg { width: min(86%, 70vw, 420px); } }
