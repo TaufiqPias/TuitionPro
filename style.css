@@ -1146,3 +1146,26 @@ tr.clk { cursor: pointer; }
 .lhprev { aspect-ratio: 4 / 1; border: 1px dashed var(--mut); border-radius: 10px; display: grid; place-items: center; overflow: hidden; background: #fff; color: #64809b; font-size: 12.5px; }
 .lhprev img { width: 100%; height: 100%; object-fit: contain; }
 @media (max-width: 560px) { .parts { grid-template-columns: 1fr; } }
+
+/* ---------- WhatsApp ---------- */
+.wa-conn { display: flex; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px; flex-wrap: wrap; }
+.wa-conn .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); display: inline-block; }
+.wa-conn.ok .dot { background: var(--ok); }
+.wa-card { padding: 14px 16px; margin-bottom: 12px; }
+.wa-sum { margin-top: 10px; font-size: 13px; }
+.wa-sum details { margin-top: 4px; }
+.wa-chips { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+.wa-chips .chip { cursor: pointer; border: 1px solid var(--bd); background: var(--inp); color: var(--tx); }
+.wa-attach { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.wa-files { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.wa-file { display: inline-flex; align-items: center; gap: 6px; background: var(--inp); color: var(--tx); border: 1px solid var(--bd); }
+.wa-file button { border: 0; background: none; cursor: pointer; color: var(--mut); font-size: 15px; line-height: 1; }
+.wa-bar { height: 8px; border-radius: 6px; background: var(--inp); overflow: hidden; }
+.wa-bar i { display: block; height: 100%; background: var(--ac); transition: width 0.3s; }
+.wa-cnt { display: flex; gap: 14px; align-items: center; margin-top: 10px; font-size: 13px; flex-wrap: wrap; }
+.wa-err { margin-top: 8px; padding: 8px 10px; border-radius: 10px; font-size: 12px; background: #dc262618; color: var(--bad); }
+.chip.wa-ok { background: #16a34a22; color: var(--ok); }
+.chip.wa-fail { background: #dc262622; color: var(--bad); }
+.chip.wa-send { background: #e08a0b22; color: var(--warn); }
+.chip.wa-wait { background: var(--inp); color: var(--mut); }
+.wa-note { font-size: 12px; margin: 4px 2px 20px; }

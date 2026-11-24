@@ -82,6 +82,7 @@ const ICON = {
   res: '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/>',
   pro: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.5-6.5 8-6.5s8 2.5 8 6.5"/>',
   acc: '<path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+  wa: '<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
   trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3"/>',
@@ -98,6 +99,7 @@ const VIEWS = {
   attendance: "Attendance",
   fees: "Tuition fees",
   results: "Results",
+  wa: "WhatsApp",
   profile: "My profile",
   admin: "Admin panel",
 };
@@ -107,6 +109,7 @@ const NAVICON = {
   attendance: "att",
   fees: "fee",
   results: "res",
+  wa: "wa",
   profile: "pro",
   admin: "acc",
 };
@@ -349,7 +352,7 @@ function render() {
   if (route === "admin" && ME.role !== "master") route = "dash";
   document.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === route));
   $("#title").textContent = VIEWS[route];
-  ({ dash: vDash, students: vStudents, attendance: vAttendance, fees: vFees, results: vResults, profile: vProfile, admin: vAdmin }[route] || vSoon)();
+  ({ dash: vDash, students: vStudents, attendance: vAttendance, fees: vFees, results: vResults, wa: vWA, profile: vProfile, admin: vAdmin }[route] || vSoon)();
   feeBadge();
 }
 
@@ -576,7 +579,7 @@ function rows() {
     L.map((s) => {
       const b = batchOf(s);
       return `<tr><td><b>${esc(s.sid)}</b></td><td>${esc(s.name)}${s.school ? `<small class="mut" style="display:block">${esc(s.school)}</small>` : ""}</td><td>${esc(clsLabel(stuClass(s)))}</td><td>${b ? esc(b.section) + " " + t12(b.start) + " " + daysTag(b) : "Unassigned"}</td><td>${esc(s.guardian)}</td><td>${esc(s.phone)}</td><td>${esc(s.fee)}<small class="mut"> ${s.feeType === "Course" ? "course" : "/month"}</small></td><td><span class="chip s-${esc(s.status)}">${esc(s.status)}</span></td>
-   <td style="text-align:right"><span class="ra">${icoBtn("", "Edit student", `editStudent('${s.id}')`, "edit")}${icoBtn("del", "Delete student", `delStudent('${s.id}')`, "trash")}</span></td></tr>`;
+   <td style="text-align:right"><span class="ra">${icoBtn("", "Message on WhatsApp", `waOne('${s.id}')`, "wa")}${icoBtn("", "Edit student", `editStudent('${s.id}')`, "edit")}${icoBtn("del", "Delete student", `delStudent('${s.id}')`, "trash")}</span></td></tr>`;
     }).join("") ||
     `<tr><td colspan="9"><div class="empty">No students match. Clear the filters or use Add student.</div></td></tr>`;
 }
