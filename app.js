@@ -1,7 +1,7 @@
 /* ============ CONFIG ============
    The Apps Script URL lives in config.js (so you never have to edit this file). */
 const API_URL = (window.TP_CONFIG && window.TP_CONFIG.API_URL) || "";
-const NEED_BUILD = "8"; // must match BUILD in Code.gs
+const NEED_BUILD = "9"; // must match BUILD in Code.gs
 const POLL_MS = 10000;
 const CLASSES = [
   "1",
@@ -488,6 +488,7 @@ function editBatch(id) {
    <div class="full"><div class="lbl">Batch days (choose one or more)</div>
     <div class="days" id="b_days">${DAYS.map(([c, , n]) => `<label class="chk"><input type="checkbox" value="${c}" ${cur.has(c) ? "checked" : ""}><span>${n}</span></label>`).join("")}</div></div>
    <label class="full">Batch name (automatic)<input class="in" id="b_name" readonly placeholder="Choose a start time and days"></label>
+   <label class="full">WhatsApp group invite link (optional)<input class="in" id="b_link" placeholder="https://chat.whatsapp.com/…" value="${e ? esc(e.groupLink || "") : ""}"></label>
   </div>
   <div class="acts" style="justify-content:space-between">${e ? icoBtn("del", "Delete batch", `delBatch('${e.id}')`, "trash") : "<span></span>"}
    <span style="display:flex;gap:8px"><button class="btn" onclick="closeM()">Cancel</button><button class="btn p" onclick="saveBatch('${e ? e.id : ""}')">${e ? "Save changes" : "Save batch"}</button></span></div>`;
@@ -502,12 +503,13 @@ async function saveBatch(id) {
   const c = $("#b_class").value, sec = $("#b_section").value, st = $("#b_start").value, codes = pickedDays();
   if (!st) { toast("Choose the batch start time"); return; }
   if (!codes.length) { toast("Select at least one batch day"); return; }
-  const days = codes.join(","), name = batchName(c, sec, st, codes);
+  const days = codes.join(","), name = batchName(c, sec, st, codes), groupLink = $("#b_link").value.trim();
+  if (groupLink && !waLinkOk(groupLink)) { toast("That is not a WhatsApp group invite link (it starts with https://chat.whatsapp.com/)"); return; }
   if (DB.Batches.some((b) => b.id !== id && b.class === c && b.section === sec && b.start === st && (b.days || "") === days)) {
     toast("This class, section, time and days already exists");
     return;
   }
-  const row = { id: id || uid(), class: c, section: sec, start: st, days, name };
+  const row = { id: id || uid(), class: c, section: sec, start: st, days, name, groupLink };
   const old = DB.Batches.find((b) => b.id === id);
   old ? Object.assign(old, row) : DB.Batches.push(row);
   // keep the readable copies stored on each student in step with the batch
