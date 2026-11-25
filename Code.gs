@@ -21,7 +21,7 @@ const APP_URL = 'https://taufiqpias.github.io/TuitionPro'; // link used in email
 const ROOT_NAME = 'TuitionPro';               // top-level Drive folder
 
 const DATA = {
-  Students:   ['id','sid','name','class','section','batch','batchId','guardian','phone','fee','status','joined','updated','roll','feeType','feeFrom','school'],
+  Students:   ['id','sid','name','class','section','batch','batchId','guardian','phone','fee','status','joined','updated','roll','feeType','feeFrom','school','archived','archivedAt','nextClass','nextYear'],
   Batches:    ['id','class','section','name','start','days','groupLink'],
   Attendance: ['id','date','studentId','batchId','status'],
   Fees:       ['id','studentId','month','amount','paid','date','kind','method','note','rcpt','batchId'],
@@ -31,7 +31,7 @@ const DATA = {
 const USERS = ['id','salt','hash','role','status','name','email','phone','address','speciality','trainers','services','logo','photo','lh1','lh2','lh3','lh4','token','exp','created','folderId','sheetId','note'];
 const PROFILE = ['name','email','phone','address','speciality','trainers','services','logo','photo','lh1','lh2','lh3','lh4'];
 const DAY = 864e5;
-const BUILD = '9'; // the app compares this to know whether you deployed the latest Code.gs
+const BUILD = '10'; // the app compares this to know whether you deployed the latest Code.gs
 
 /* ---------- small helpers ---------- */
 const P_ = () => PropertiesService.getScriptProperties();

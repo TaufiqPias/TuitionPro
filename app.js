@@ -1,7 +1,7 @@
 /* ============ CONFIG ============
    The Apps Script URL lives in config.js (so you never have to edit this file). */
 const API_URL = (window.TP_CONFIG && window.TP_CONFIG.API_URL) || "";
-const NEED_BUILD = "9"; // must match BUILD in Code.gs
+const NEED_BUILD = "10"; // must match BUILD in Code.gs
 const POLL_MS = 10000;
 const CLASSES = [
   "1",
@@ -82,7 +82,9 @@ const ICON = {
   res: '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/>',
   pro: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.5-6.5 8-6.5s8 2.5 8 6.5"/>',
   acc: '<path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
-  wa: '<path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/>',
+  wa: '<path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.3-.15-1.263-.465-2.403-1.485-.888-.795-1.484-1.77-1.66-2.07-.174-.3-.019-.465.13-.615.136-.135.301-.345.451-.523.146-.181.194-.301.297-.496.1-.21.049-.375-.025-.524-.075-.15-.672-1.62-.922-2.206-.24-.584-.487-.51-.672-.51-.172-.015-.371-.015-.571-.015-.2 0-.523.074-.797.359-.273.3-1.045 1.02-1.045 2.475s1.07 2.865 1.219 3.075c.149.18 2.095 3.195 5.076 4.483.709.3 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>',
+  arch: '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11h14V8M10 12h4"/>',
+  undo: '<path d="M4 12a8 8 0 1 0 2.6-5.9M4 4v5h5"/>',
   edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
   trash: '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/>',
   key: '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M16 7l3 3"/>',
@@ -96,6 +98,7 @@ const ICON = {
 const VIEWS = {
   dash: "Dashboard",
   students: "Students",
+  archive: "Archive",
   attendance: "Attendance",
   fees: "Tuition fees",
   results: "Results",
@@ -106,6 +109,7 @@ const VIEWS = {
 const NAVICON = {
   dash: "dash",
   students: "stu",
+  archive: "arch",
   attendance: "att",
   fees: "fee",
   results: "res",
@@ -137,6 +141,7 @@ const esc = (s) =>
 const uid = () =>
   "R" + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
 const svg = (k) =>
+  k === "wa" ? `<svg viewBox="0 0 24 24" fill="#25D366" stroke="none">${ICON.wa}</svg>` :
   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${ICON[k]}</svg>`;
 const t12 = (t) => {
   const mm = String(t || "").match(/^(\d{1,2}):(\d{2})/);
@@ -352,7 +357,7 @@ function render() {
   if (route === "admin" && ME.role !== "master") route = "dash";
   document.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === route));
   $("#title").textContent = VIEWS[route];
-  ({ dash: vDash, students: vStudents, attendance: vAttendance, fees: vFees, results: vResults, wa: vWA, profile: vProfile, admin: vAdmin }[route] || vSoon)();
+  ({ dash: vDash, students: vStudents, archive: vArchive, attendance: vAttendance, fees: vFees, results: vResults, wa: vWA, profile: vProfile, admin: vAdmin }[route] || vSoon)();
   feeBadge();
 }
 
@@ -400,12 +405,23 @@ function nextSid(batch, joined) {
   return pre + String(n + 1).padStart(3, "0");
 }
 
+/* ---- archive helpers: archived students stay in DB.Students (so fees/attendance history is kept) but are hidden from every live list ---- */
+const isArch = (s) => String(s.archived) === "1";
+const liveStu = () => DB.Students.filter((s) => !isArch(s));
+const archStu = () => DB.Students.filter(isArch);
+// Next class when a student is promoted. 9 -> 10, 10 -> 11, SSC Final -> 11, 12 -> HSC Final, etc.
+function nextClassOf(c) {
+  if (/^\d+$/.test(c)) { const n = +c; if (n < 10) return String(n + 1); if (n === 10) return "11"; if (n === 11) return "12"; if (n === 12) return "HSC Final"; }
+  if (c === "SSC Final") return "11";
+  return c;
+}
+
 /* ============ DASHBOARD: stats + searchable class/batch rows ============ */
 const DF = { q: "", cls: "", sec: "", day: "" };
 // Payment pending = active students who currently owe something (see Tuition fees)
 const payPending = () => feeAll().filter((x) => x.I.pending > 0).length;
 function vDash() {
-  const S = DB.Students;
+  const S = liveStu();
   const un = S.filter((s) => !batchOf(s)).length;
   const used = CLASSES.filter((c) => DB.Batches.some((b) => b.class === c));
   $("#view").innerHTML = `
@@ -434,7 +450,7 @@ function dashRows() {
   const words = DF.q.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const dayNames = (b) => dayCodes(b).map((c) => DAYS.find((d) => d[0] === c)[2]).join(" ");
   const G = sortBatches(DB.Batches)
-    .map((b) => ({ b, list: DB.Students.filter((s) => s.batchId === b.id) }))
+    .map((b) => ({ b, list: liveStu().filter((s) => s.batchId === b.id) }))
     .filter(({ b, list }) => {
       if (DF.cls && b.class !== DF.cls) return false;
       if (DF.sec && b.section !== DF.sec) return false;
@@ -544,7 +560,7 @@ async function doDelBatch(id) {
 /* ============ STUDENTS ============ */
 function filtered() {
   const q = F.q.toLowerCase();
-  return DB.Students.filter(
+  return liveStu().filter(
     (s) =>
       (!F.cls || stuClass(s) === F.cls) &&
       (!F.st || s.status === F.st) &&
@@ -553,7 +569,7 @@ function filtered() {
   );
 }
 function vStudents() {
-  const B = sortBatches(DB.Batches), hasUn = DB.Students.some((s) => !batchOf(s));
+  const B = sortBatches(DB.Batches), hasUn = liveStu().some((s) => !batchOf(s));
   $("#view").innerHTML = `
   <div class="glass tools">
    <input class="in grow" id="fq" placeholder="Search name, student ID, school, guardian, phone" value="${esc(F.q)}">
@@ -580,8 +596,8 @@ function rows() {
   $("#tb").innerHTML =
     L.map((s) => {
       const b = batchOf(s);
-      return `<tr><td><b>${esc(s.sid)}</b></td><td>${esc(s.name)}${s.school ? `<small class="mut" style="display:block">${esc(s.school)}</small>` : ""}</td><td>${esc(clsLabel(stuClass(s)))}</td><td>${b ? esc(b.section) + " " + t12(b.start) + " " + daysTag(b) : "Unassigned"}</td><td>${esc(s.guardian)}</td><td>${esc(s.phone)}</td><td>${esc(s.fee)}<small class="mut"> ${s.feeType === "Course" ? "course" : "/month"}</small></td><td><span class="chip s-${esc(s.status)}">${esc(s.status)}</span></td>
-   <td style="text-align:right"><span class="ra">${icoBtn("", "Message on WhatsApp", `waOne('${s.id}')`, "wa")}${icoBtn("", "Edit student", `editStudent('${s.id}')`, "edit")}${icoBtn("del", "Delete student", `delStudent('${s.id}')`, "trash")}</span></td></tr>`;
+      return `<tr><td><b>${esc(s.sid)}</b></td><td>${esc(s.name)}${s.school ? `<small class="mut" style="display:block">${esc(s.school)}</small>` : ""}</td><td>${esc(clsLabel(stuClass(s)))}</td><td>${b ? esc(b.section) + " " + t12(b.start) + " " + daysTag(b) : "Unassigned"}</td><td>${esc(s.guardian)}</td><td>${esc(s.phone)}</td><td>${esc(s.fee)}<small class="mut"> ${s.feeType === "Course" ? "course" : "/month"}</small></td><td>${statusSel(s)}</td>
+   <td style="text-align:right"><span class="ra">${icoBtn("", "Message on WhatsApp", `waOne('${s.id}')`, "wa")}${icoBtn("", "Edit student", `editStudent('${s.id}')`, "edit")}${icoBtn("", "Archive student", `archiveStudent('${s.id}')`, "arch")}${icoBtn("del", "Delete student", `delStudent('${s.id}')`, "trash")}</span></td></tr>`;
     }).join("") ||
     `<tr><td colspan="9"><div class="empty">No students match. Clear the filters or use Add student.</div></td></tr>`;
 }
@@ -598,7 +614,6 @@ function editStudent(id) {
    <label class="full">Assign Class &amp; Batch<select class="in" id="m_batch"><option value="">Select class &amp; batch</option>${B.map((b) => `<option value="${esc(b.id)}" ${cur === b.id ? "selected" : ""}>${esc(bLabel(b))}</option>`).join("")}</select></label>
    <label>Student ID (automatic)<input class="in" id="m_sid" readonly value="${v("sid")}" placeholder="Pick a batch"></label>
    <label>Joined<input class="in" id="m_joined" type="date" value="${s.joined || new Date().toISOString().slice(0, 10)}"></label>
-   <label>Status<select class="in" id="m_status">${STATUSES.map((c) => `<option ${s.status === c ? "selected" : ""}>${c}</option>`).join("")}</select></label>
    <label>Fee plan<select class="in" id="m_feeType" onchange="feePlanUI()"><option ${s.feeType !== "Course" ? "selected" : ""}>Monthly</option><option ${s.feeType === "Course" ? "selected" : ""}>Course</option></select></label>
    <label><span id="m_feeLbl">Monthly Fee</span><input class="in" id="m_fee" type="number" min="0" value="${v("fee")}"></label>
    <label id="m_ffw">Billing starts<input class="in" id="m_feeFrom" type="month" value="${esc(s.feeFrom || (s.joined || new Date().toISOString().slice(0, 10)).slice(0, 7))}"></label>
@@ -646,7 +661,7 @@ async function saveStudent(id) {
     fee: g("fee"),
     feeType: g("feeType"),
     feeFrom: g("feeFrom") || g("joined").slice(0, 7),
-    status: g("status"),
+    status: old && old.status ? old.status : "Active",
     joined: g("joined"),
     updated: new Date().toISOString(),
   };
@@ -681,6 +696,103 @@ async function delStudent(id) {
   render();
   await write("remove", { table: "Students", id }, "Student deleted");
 }
+/* ---------- status dropdown directly in the table ---------- */
+const statusSel = (s) =>
+  `<select class="in st-sel s-${esc(s.status)}" title="Change status" aria-label="Status" onclick="event.stopPropagation()" onchange="setStatus('${esc(s.id)}', this.value)">${STATUSES.map((c) => `<option ${s.status === c ? "selected" : ""}>${c}</option>`).join("")}</select>`;
+async function setStatus(id, v) {
+  const s = DB.Students.find((x) => x.id === id);
+  if (!s || s.status === v || !STATUSES.includes(v)) return;
+  s.status = v; s.updated = new Date().toISOString();
+  rows();
+  await write("save", { table: "Students", row: s }, `${s.name}: ${v}`);
+}
+
+/* ============ ARCHIVE ============ */
+const AR = { q: "", cls: "" };
+function archiveStudent(id) {
+  const s = DB.Students.find((x) => x.id === id); if (!s) return;
+  const cur = stuClass(s), nx = nextClassOf(cur), yr = new Date().getFullYear() + 1;
+  $("#modal").innerHTML = `<h2>Archive this student?</h2>
+  <p style="margin-bottom:10px"><b>${esc(s.name)}</b> <small class="mut">${esc(s.sid)} · ${esc(clsLabel(cur))}</small></p>
+  <div class="f">
+   <label>Re-enroll in class<select class="in" id="a_cls">${CLASSES.map((c) => `<option value="${esc(c)}" ${c === nx ? "selected" : ""}>${esc(clsLabel(c))}</option>`).join("")}</select></label>
+   <label>Year<input class="in" id="a_yr" type="number" min="2000" max="2100" value="${yr}"></label>
+  </div>
+  <div class="mut" style="font-size:12px;margin-top:8px">The student leaves the active lists (Students, Attendance, Fees, Results, WhatsApp). Fee and attendance history is kept. In the Archive tab you can re-enroll them into the ${esc(clsLabel(nx))} batches.</div>
+  <div class="acts"><button class="btn" onclick="closeM()">Cancel</button><button class="btn p" onclick="doArchive('${esc(id)}')">Archive</button></div>`;
+  $("#ov").classList.add("on");
+}
+async function doArchive(id) {
+  const s = DB.Students.find((x) => x.id === id); if (!s) return;
+  const yr = Number($("#a_yr").value);
+  if (!(yr >= 2000 && yr <= 2100)) { toast("Enter a valid year"); return; }
+  Object.assign(s, { archived: "1", archivedAt: new Date().toISOString().slice(0, 10), nextClass: $("#a_cls").value, nextYear: String(yr), updated: new Date().toISOString() });
+  closeM(); render();
+  await write("save", { table: "Students", row: s }, "Student archived");
+}
+function vArchive() {
+  const L0 = archStu(), used = CLASSES.filter((c) => L0.some((s) => s.nextClass === c));
+  $("#view").innerHTML = `
+  <div class="glass tools">
+   <input class="in grow" id="aq" placeholder="Search archived students" value="${esc(AR.q)}">
+   <select class="in" id="ac"><option value="">All next classes</option>${used.map((c) => `<option value="${esc(c)}" ${AR.cls === c ? "selected" : ""}>${esc(clsLabel(c))}</option>`).join("")}</select>
+  </div>
+  <div class="glass tw"><table><thead><tr><th>Student ID</th><th>Name</th><th>Was in</th><th>Re-enroll as</th><th>Archived on</th><th>Guardian</th><th>Phone</th><th></th></tr></thead><tbody id="atb"></tbody></table></div>`;
+  $("#aq").oninput = (e) => { AR.q = e.target.value; archRows(); };
+  $("#ac").onchange = (e) => { AR.cls = e.target.value; archRows(); };
+  archRows();
+}
+function archRows() {
+  const q = AR.q.toLowerCase();
+  const L = archStu().filter((s) => (!AR.cls || s.nextClass === AR.cls) && (!q || [s.name, s.sid, s.school, s.guardian, s.phone].join(" ").toLowerCase().includes(q)))
+    .sort((x, y) => String(x.nextYear).localeCompare(String(y.nextYear)) || CLASSES.indexOf(x.nextClass) - CLASSES.indexOf(y.nextClass) || String(x.name).localeCompare(String(y.name)));
+  $("#atb").innerHTML = L.map((s) => {
+    const b = batchOf(s);
+    return `<tr><td><b>${esc(s.sid)}</b></td><td>${esc(s.name)}${s.school ? `<small class="mut" style="display:block">${esc(s.school)}</small>` : ""}</td>
+    <td>${esc(clsLabel(s.class))}${b ? `<small class="mut" style="display:block">${esc(b.section)} ${t12(b.start)} ${daysTag(b)}</small>` : ""}</td>
+    <td><span class="chip s-Active">${esc(clsLabel(s.nextClass || nextClassOf(s.class)))} · ${esc(s.nextYear || "")}</span></td>
+    <td>${esc(s.archivedAt || "")}</td><td>${esc(s.guardian)}</td><td>${esc(s.phone)}</td>
+    <td style="text-align:right"><span class="ra"><button class="btn p" onclick="reenrollModal('${esc(s.id)}')">${svg("undo")}<span style="margin-left:6px">Re-enroll</span></button>${icoBtn("del", "Delete student", `delStudent('${esc(s.id)}')`, "trash")}</span></td></tr>`;
+  }).join("") || `<tr><td colspan="8"><div class="empty">${archStu().length ? "No archived students match." : "Nothing archived yet. Use the archive button on a student row."}</div></td></tr>`;
+}
+function reenrollModal(id) {
+  const s = DB.Students.find((x) => x.id === id); if (!s) return;
+  const nc = s.nextClass || nextClassOf(s.class), yr = Number(s.nextYear) || new Date().getFullYear() + 1;
+  const today = new Date().toISOString().slice(0, 10), start = yr + "-01-01", joined = start > today ? start : today;
+  const B = sortBatches(DB.Batches), mine = B.filter((b) => b.class === nc), rest = B.filter((b) => b.class !== nc);
+  const opt = (b) => `<option value="${esc(b.id)}">${esc(bLabel(b))}</option>`;
+  $("#modal").innerHTML = `<h2>Re-enroll student</h2>
+  <p style="margin-bottom:10px"><b>${esc(s.name)}</b> <small class="mut">${esc(s.sid)} · was ${esc(clsLabel(s.class))}</small></p>
+  <div class="f">
+   <label class="full">${esc(clsLabel(nc))} batch<select class="in" id="r_batch"><option value="">Select batch</option>
+    ${mine.length ? `<optgroup label="${esc(clsLabel(nc))}">${mine.map(opt).join("")}</optgroup>` : ""}
+    ${rest.length ? `<optgroup label="Other classes">${rest.map(opt).join("")}</optgroup>` : ""}</select></label>
+   ${mine.length ? "" : `<div class="full warnbox">No ${esc(clsLabel(nc))} batch exists yet. Create one with <b>Add Class/Batch</b>, or pick another class above.</div>`}
+   <label>Joined<input class="in" id="r_joined" type="date" value="${joined}"></label>
+   <label>Student ID (new, automatic)<input class="in" id="r_sid" readonly></label>
+   <label>Fee plan<select class="in" id="r_feeType"><option ${s.feeType !== "Course" ? "selected" : ""}>Monthly</option><option ${s.feeType === "Course" ? "selected" : ""}>Course</option></select></label>
+   <label>Fee<input class="in" id="r_fee" type="number" min="0" value="${esc(s.fee)}"></label>
+  </div>
+  <div class="acts"><button class="btn" onclick="closeM()">Cancel</button><button class="btn p" onclick="doReenroll('${esc(id)}')">Re-enroll</button></div>`;
+  const upd = () => { const b = DB.Batches.find((x) => x.id === $("#r_batch").value); $("#r_sid").value = b ? nextSid(b, $("#r_joined").value) : ""; };
+  $("#r_batch").onchange = $("#r_joined").onchange = upd;
+  upd();
+  $("#ov").classList.add("on");
+}
+async function doReenroll(id) {
+  const s = DB.Students.find((x) => x.id === id); if (!s) return;
+  const b = DB.Batches.find((x) => x.id === $("#r_batch").value), joined = $("#r_joined").value;
+  if (!b) { toast("Choose a batch"); return; }
+  if (!joined) { toast("Choose the joining date"); return; }
+  Object.assign(s, {
+    sid: nextSid(b, joined), batchId: b.id, class: b.class, section: b.section, batch: b.name,
+    joined, feeFrom: joined.slice(0, 7), feeType: $("#r_feeType").value, fee: $("#r_fee").value.trim(),
+    status: "Active", archived: "", archivedAt: "", nextClass: "", nextYear: "", updated: new Date().toISOString(),
+  });
+  closeM(); render();
+  await write("save", { table: "Students", row: s }, `${s.name} re-enrolled in ${clsLabel(b.class)}`);
+}
+
 async function exportXlsx() {
   const L = filtered().map((s) => {
     const b = batchOf(s);
@@ -921,7 +1033,7 @@ const dKey = (d) => d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(
 const dateObj = (s) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
 const shiftDate = (s, n) => { const d = dateObj(s); d.setDate(d.getDate() + n); return dKey(d); };
 const shiftMonth = (s, n) => { const [y, m] = s.split("-").map(Number); const d = new Date(y, m - 1 + n, 1); return d.getFullYear() + "-" + pad2(d.getMonth() + 1); };
-const batchStudents = (bid) => DB.Students.filter((s) => s.batchId === bid && s.status === "Active").sort((a, b) => String(a.sid).localeCompare(String(b.sid)));
+const batchStudents = (bid) => liveStu().filter((s) => s.batchId === bid && s.status === "Active").sort((a, b) => String(a.sid).localeCompare(String(b.sid)));
 function loadMarks() {
   AT.marks = {};
   DB.Attendance.forEach((r) => { if (r.batchId === AT.batch && r.date === AT.date) AT.marks[r.studentId] = r.status; });
@@ -1083,7 +1195,7 @@ function feeInfo(s, recs) {
 }
 function feeAll(everyone) {
   const by = {}; DB.Fees.forEach((f) => (by[f.studentId] = by[f.studentId] || []).push(f));
-  return DB.Students.filter((s) => everyone || s.status === "Active").map((s) => ({ s, I: feeInfo(s, by[s.id] || []) }));
+  return liveStu().filter((s) => everyone || s.status === "Active").map((s) => ({ s, I: feeInfo(s, by[s.id] || []) }));
 }
 function feeBadge() { // notification tag on the Tuition fees menu item
   const n = DB.Students.length ? payPending() : 0, el = document.querySelector('.nav a[data-r="fees"] .nb');
@@ -1244,7 +1356,7 @@ function skipFee(id) {
 }
 async function doSkip(id) {
   const s = DB.Students.find((x) => x.id === id), m = $("#k_m").value, note = $("#k_note").value.trim(), date = dKey(new Date());
-  const who = $("#k_all") && $("#k_all").checked ? DB.Students.filter((x) => x.batchId === s.batchId && x.status === "Active" && x.feeType !== "Course") : [s];
+  const who = $("#k_all") && $("#k_all").checked ? liveStu().filter((x) => x.batchId === s.batchId && x.status === "Active" && x.feeType !== "Course") : [s];
   const rows = who.filter((x) => { const I = feeInfo(x); return !I.skipped.has(m) && !(I.paidBy[m] > 0); })
     .map((x) => ({ id: uid(), studentId: x.id, month: m, amount: "0", paid: "", date, kind: "skip", method: "", note, rcpt: "", batchId: x.batchId || "" }));
   if (!rows.length) { toast("Nothing to skip for that month"); return; }
@@ -1483,7 +1595,7 @@ function calcRes(e, r) {
   return { st: g.gpa > 0 ? "Pass" : "Fail", P, full, got, total, pct, grade: g.grade, gpa: g.gpa, failed };
 }
 function examRoster(e) {
-  const ids = new Set(DB.Students.filter((s) => s.batchId === e.batchId && s.status === "Active").map((s) => s.id));
+  const ids = new Set(liveStu().filter((s) => s.batchId === e.batchId && s.status === "Active").map((s) => s.id));
   Object.keys(RIX[e.id] || {}).forEach((id) => ids.add(id));
   return [...ids].map((id) => DB.Students.find((s) => s.id === id)).filter(Boolean).sort((a, b) => String(a.sid).localeCompare(String(b.sid)));
 }
@@ -1710,7 +1822,7 @@ function histData() {
     pass: done.filter((x) => x.c.st === "Pass").length, absent: L.filter((x) => x.c.st === "Absent").length };
 }
 function rsHistory() {
-  const S = DB.Students.filter((s) => !RS.sBatch || s.batchId === RS.sBatch).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const S = liveStu().filter((s) => !RS.sBatch || s.batchId === RS.sBatch).sort((a, b) => String(a.name).localeCompare(String(b.name)));
   if (RS.stu && !DB.Students.some((s) => s.id === RS.stu)) RS.stu = "";
   $("#rs_body").innerHTML = `<div class="glass tools">
    <select class="in" id="hb"><option value="">All batches</option>${sortBatches(DB.Batches).map((b) => `<option value="${esc(b.id)}" ${RS.sBatch === b.id ? "selected" : ""}>${esc(clsLabel(b.class) + " · " + bLabel(b))}</option>`).join("")}</select>

@@ -30,7 +30,7 @@ function waFill(t, s) {
 
 /* ---------- recipients ---------- */
 function waTargets() {
-  const all = DB.Students;
+  const all = liveStu();
   let list = [];
   if (WA.mode === "student") list = all.filter((s) => s.id === WA.student);
   else {
@@ -54,13 +54,13 @@ function waOne(id) { WA.mode = "student"; WA.student = id; WA.done = new Set(); 
 function waSetMode(m) { WA.mode = m; WA.done = new Set(); if (m === "group" && !WA.scope.startsWith("b:")) WA.scope = ""; vWA(); }
 function vWA() {
   const B = sortBatches(DB.Batches), used = CLASSES.filter((x) => B.some((b) => b.class === x));
-  const nIn = (f) => DB.Students.filter((s) => (WA.inactive || (s.status || "Active") === "Active") && f(s)).length;
+  const nIn = (f) => liveStu().filter((s) => (WA.inactive || (s.status || "Active") === "Active") && f(s)).length;
   const stu = DB.Students.find((s) => s.id === WA.student), m = WA.mode;
   const tabs = [["student", "One student"], ["batch", "Class / batch"], ["all", "Everyone"], ["group", "Group invite"]]
     .map(([k, l]) => `<button type="button" class="${m === k ? "on" : ""}" onclick="waSetMode('${k}')">${l}</button>`).join("");
   const bOpt = (b) => `<option value="b:${esc(b.id)}" ${WA.scope === "b:" + b.id ? "selected" : ""}>${esc(bLabel(b))} (${nIn((s) => s.batchId === b.id)})${m === "group" ? (waLinkOk(b.groupLink) ? " · link saved" : " · no link") : ""}</option>`;
   const picker = m === "student"
-    ? `<label class="full">Student<input class="in" id="wa_stu" list="wa_stul" autocomplete="off" placeholder="Type a name or student ID" value="${esc(stu ? stu.name + " · " + stu.sid : "")}"><datalist id="wa_stul">${DB.Students.map((s) => `<option value="${esc(s.name + " · " + s.sid)}">`).join("")}</datalist></label>`
+    ? `<label class="full">Student<input class="in" id="wa_stu" list="wa_stul" autocomplete="off" placeholder="Type a name or student ID" value="${esc(stu ? stu.name + " · " + stu.sid : "")}"><datalist id="wa_stul">${liveStu().map((s) => `<option value="${esc(s.name + " · " + s.sid)}">`).join("")}</datalist></label>`
     : m === "batch"
       ? `<label class="full">Class or batch<select class="in" id="wa_scope"><option value="">Choose…</option>
           <optgroup label="Whole class (all its batches)">${used.map((x) => `<option value="c:${esc(x)}" ${WA.scope === "c:" + x ? "selected" : ""}>${esc(clsLabel(x))} (${nIn((s) => stuClass(s) === x)})</option>`).join("")}</optgroup>
