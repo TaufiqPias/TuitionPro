@@ -31,7 +31,7 @@ const DATA = {
 const USERS = ['id','salt','hash','role','status','name','email','phone','address','speciality','trainers','services','logo','photo','lh1','lh2','lh3','lh4','token','exp','created','folderId','sheetId','note'];
 const PROFILE = ['name','email','phone','address','speciality','trainers','services','logo','photo','lh1','lh2','lh3','lh4'];
 const DAY = 864e5;
-const BUILD = '11'; // the app compares this to know whether you deployed the latest Code.gs
+const BUILD = '12'; // the app compares this to know whether you deployed the latest Code.gs
 
 /* ---------- small helpers ---------- */
 const P_ = () => PropertiesService.getScriptProperties();
@@ -39,6 +39,8 @@ const err_ = m => out_({ ok: false, error: m });
 function out_(o) { return ContentService.createTextOutput(JSON.stringify(o)).setMimeType(ContentService.MimeType.JSON); }
 const h_ = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 const hash_ = (salt, pw) => Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, salt + pw, Utilities.Charset.UTF_8));
+// Same phone number even if written with/without the country code or spaces (compares the last 10 digits)
+const samePhone_ = (stored, digits) => { const a = String(stored == null ? '' : stored).replace(/\D/g, ''); return a.length >= 7 && digits.length >= 7 && (a === digits || (a.length >= 10 && digits.length >= 10 && a.slice(-10) === digits.slice(-10))); };
 const ver_ = k => P_().getProperty('V_' + k) || '0';
 const bump_ = k => { const v = String(Date.now()); P_().setProperty('V_' + k, v); return v; };
 const adminVer_ = () => P_().getProperty('VADMIN') || '0';
@@ -183,6 +185,8 @@ function check_(U, q, needEmail, needPhone) {
   const phone = String(q.phone || '').trim().slice(0, 30), pd = phone.replace(/\D/g, '');
   if ((needPhone || phone) && (pd.length < 7 || pd.length > 15)) return { e: 'Enter a valid phone number' };
   if (U.some(r => String(r.id) === id)) return { e: 'That ID is already taken' };
+  if (email && U.some(r => String(r.email || '').trim().toLowerCase() === email.toLowerCase())) return { e: 'That email is already used by another account' };
+  if (pd && U.some(r => samePhone_(r.phone, pd))) return { e: 'That phone number is already used by another account' };
   const salt = Utilities.getUuid();
   return { u: { id, salt, hash: hash_(salt, q.pw), name, email, phone, created: new Date().toISOString() } };
 }
@@ -211,9 +215,13 @@ function doPost(e) {
     const U = rows_(users);
 
     if (a === 'login') {
-      const id = String(q.id || '').trim().toLowerCase();
-      const u = U.find(r => String(r.id) === id);
-      if (!u || hash_(u.salt, q.pw || '') !== u.hash) { Utilities.sleep(800); return err_('Wrong ID or password'); }
+      const key = String(q.id || '').trim().toLowerCase(), digits = key.replace(/\D/g, '');
+      let m = U.filter(r => String(r.id) === key);                                                              // 1. ID
+      if (!m.length && key.indexOf('@') > 0) m = U.filter(r => String(r.email || '').trim().toLowerCase() === key); // 2. email
+      if (!m.length && digits.length >= 7) m = U.filter(r => samePhone_(r.phone, digits));                      // 3. phone
+      if (m.length > 1) m = m.filter(r => hash_(r.salt, q.pw || '') === r.hash);                                // shared by several accounts: the password decides
+      const u = m.length === 1 ? m[0] : null;
+      if (!u || hash_(u.salt, q.pw || '') !== u.hash) { Utilities.sleep(800); return err_('Wrong ID, email, phone or password'); }
       if (u.status === 'pending') return err_('Your sign-up is waiting for approval. You will get an email once it is approved.');
       if (u.status === 'rejected') return err_('Your sign-up request was not approved.' + (u.note ? ' Reason: ' + u.note : ''));
       u.id = String(u.id);
@@ -296,6 +304,9 @@ function doPost(e) {
 
       case 'profile': {
         const oldName = u.name;
+        const pf = q.fields || {}, pe = String(pf.email || '').trim().toLowerCase(), pp = String(pf.phone || '').replace(/\D/g, '');
+        if (pe && U.some(r => String(r.id) !== String(u.id) && String(r.email || '').trim().toLowerCase() === pe)) return err_('That email is already used by another account');
+        if (pp && U.some(r => String(r.id) !== String(u.id) && samePhone_(r.phone, pp))) return err_('That phone number is already used by another account');
         PROFILE.forEach(k => { if (q.fields && q.fields[k] !== undefined) u[k] = q.fields[k]; });
         if (q.newPassword) {
           if (hash_(u.salt, q.oldPassword || '') !== u.hash) return err_('Current password is wrong');

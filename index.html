@@ -37,8 +37,8 @@
         <label id="lnamew" hidden>Institute or trainer name<input class="in" id="lname" autocomplete="organization" /></label>
         <label id="lemailw" hidden>Email<input class="in" id="lemail" type="email" autocomplete="email" /></label>
         <label id="lphonew" hidden>Phone number<input class="in" id="lphone" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g. 01712345678" /></label>
-        <label>ID<input class="in" id="lid" autocomplete="username" autocapitalize="none" required /></label>
-        <label>Password<input class="in" id="lpw" type="password" autocomplete="current-password" required /></label>
+        <label><span id="lidt">ID, phone or email</span><input class="in" id="lid" autocomplete="username" autocapitalize="none" required /></label>
+        <label>Password<span class="pwf" id="pwf"><input class="in" id="lpw" type="password" autocomplete="current-password" required /><button type="button" class="pwb" onclick="togglePw()" title="Show password" aria-label="Show password"><svg class="eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg><svg class="eyeoff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.9 17.9A10.1 10.1 0 0 1 12 19c-6.5 0-10-7-10-7a17.7 17.7 0 0 1 4.1-5M9.9 5.2A9.8 9.8 0 0 1 12 5c6.5 0 10 7 10 7a17.8 17.8 0 0 1-2.2 3.2M1 1l22 22M14.1 14.1a3 3 0 1 1-4.2-4.2"/></svg></button></span></label>
         <label class="lrem" id="lremw"><input type="checkbox" id="lrem" /> Remember me</label>
         <div class="lerr" id="lerr"></div>
         <div class="lok" id="lok"></div>

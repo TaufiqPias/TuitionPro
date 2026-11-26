@@ -339,7 +339,6 @@ body {
     sans-serif;
   color: var(--tx);
   background: linear-gradient(135deg, var(--bg1), var(--bg2));
-  background-attachment: fixed;
   overflow: hidden;
   padding-top: env(safe-area-inset-top, 0);
 }
@@ -350,10 +349,10 @@ body::after {
   width: 46vmax;
   height: 46vmax;
   border-radius: 50%;
-  background: var(--blob);
-  filter: blur(90px);
-  opacity: 0.35;
+  background: radial-gradient(closest-side, var(--blob) 52%, transparent 100%);
+  opacity: 0.4;
   z-index: -1;
+  pointer-events: none;
 }
 body::before {
   top: -18vmax;
@@ -362,8 +361,8 @@ body::before {
 body::after {
   bottom: -20vmax;
   right: -14vmax;
-  background: var(--ac2);
-  opacity: 0.25;
+  background: radial-gradient(closest-side, var(--ac2) 52%, transparent 100%);
+  opacity: 0.3;
 }
 button,
 input,
@@ -1501,34 +1500,12 @@ select.in.st-sel.s-Left { background-color: #dc262622; color: var(--bad); }
 .lcard { position: relative; margin: 92px 0 14px; padding-top: 88px; }
 
 /* ---------- Scrollbars (follow the theme accent) ---------- */
-* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--ac) 55%, transparent) transparent; }
-*::-webkit-scrollbar { width: 10px; height: 10px; }
-*::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ac) 50%, transparent); border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
-*::-webkit-scrollbar-thumb:hover { background: var(--ac); background-clip: padding-box; }
-*::-webkit-scrollbar-corner { background: transparent; }
-
-/* ---------- Motion: tab change, button press, modal open ---------- */
-.nav a { transition: background-color 0.2s, color 0.2s, box-shadow 0.2s, padding-left 0.2s; }
-.nav a:hover:not(.on) { padding-left: 14px; }
-.view.vin { animation: vin 0.32s cubic-bezier(0.2, 0.8, 0.3, 1); }
-@keyframes vin { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
-
-:is(.btn, .ib, .ico, .chip, .seg button, .tabs button, .ltabs button, .wa-pills button, .wa-send, .wa-row, .rowbtn, .nav a) {
-  transition: transform 0.12s ease, filter 0.15s, background-color 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s, padding-left 0.2s;
-}
-:is(.btn, .ib, .ico, .chip, .seg button, .tabs button, .ltabs button, .wa-pills button, .wa-send, .wa-row, .rowbtn, .nav a):active {
-  transform: translateY(2px);
-  filter: brightness(0.92);
-}
-:is(.btn, .wa-send):disabled:active { transform: none; filter: none; }
-
-.ov.on { animation: ofade 0.18s ease; }
-.ov.on .modal { animation: mzoom 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.1); }
-@keyframes ofade { from { opacity: 0; } to { opacity: 1; } }
-@keyframes mzoom { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
-@media (prefers-reduced-motion: reduce) { .view.vin, .ov.on, .ov.on .modal { animation: none; } }
-
+html, .view, .tw, .modal, .pop, .nav, .wa-list, .wa-thread, .adm-tw, .adm-rl, textarea, select { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--ac) 55%, transparent) transparent; }
+:is(html, .view, .tw, .modal, .pop, .nav, .wa-list, .wa-thread, .adm-tw, .adm-rl, textarea, select)::-webkit-scrollbar { width: 10px; height: 10px; }
+:is(html, .view, .tw, .modal, .pop, .nav, .wa-list, .wa-thread, .adm-tw, .adm-rl, textarea, select)::-webkit-scrollbar-track { background: transparent; }
+:is(html, .view, .tw, .modal, .pop, .nav, .wa-list, .wa-thread, .adm-tw, .adm-rl, textarea, select)::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--ac) 50%, transparent); border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
+:is(html, .view, .tw, .modal, .pop, .nav, .wa-list, .wa-thread, .adm-tw, .adm-rl, textarea, select)::-webkit-scrollbar-thumb:hover { background: var(--ac); background-clip: padding-box; }
+:is(html, .view, .tw, .modal, .pop, .nav, .wa-list, .wa-thread, .adm-tw, .adm-rl, textarea, select)::-webkit-scrollbar-corner { background: transparent; }
 #pop { max-height: 70vh; overflow-y: auto; }
 
 /* ---------- Sidebar: hide button, WhatsApp division, copyright ---------- */
@@ -1582,3 +1559,21 @@ select.in.st-sel.s-Left { background-color: #dc262622; color: var(--bad); }
 .dp .dpb svg { width: 16px; height: 16px; }
 label .dp { display: flex; width: 100%; }
 label .dp .dtx { flex: 1; width: auto; min-width: 0; }
+
+/* ---------- Performance (same look, less work for the GPU) ---------- */
+/* Small repeated cards sit on a plain gradient, so the live blur behind each one is wasted work. Big surfaces keep it. */
+.stat, .crow, .arow, .rss > div { -webkit-backdrop-filter: none; backdrop-filter: none; }
+.glass .glass { -webkit-backdrop-filter: none; backdrop-filter: none; }
+/* Skip drawing rows and cards that are scrolled out of view */
+.arow { content-visibility: auto; contain-intrinsic-size: auto 58px; }
+.crow { content-visibility: auto; contain-intrinsic-size: auto 120px; }
+.view { overscroll-behavior: contain; }
+
+/* ---------- Show / hide password ---------- */
+.pwf { position: relative; display: block; }
+.pwf .in { width: 100%; padding-right: 44px; }
+.pwb { position: absolute; right: 6px; top: 50%; margin-top: -16px; width: 32px; height: 32px; border: 0; border-radius: 8px; background: none; color: var(--mut); cursor: pointer; display: grid; place-items: center; }
+.pwb:hover { color: var(--ac); }
+.pwb svg { width: 18px; height: 18px; }
+.pwb .eyeoff, .pwf.show .pwb .eye { display: none; }
+.pwf.show .pwb .eyeoff { display: block; }

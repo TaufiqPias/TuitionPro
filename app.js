@@ -1,7 +1,7 @@
 /* ============ CONFIG ============
    The Apps Script URL lives in config.js (so you never have to edit this file). */
 const API_URL = (window.TP_CONFIG && window.TP_CONFIG.API_URL) || "";
-const NEED_BUILD = "11"; // must match BUILD in Code.gs
+const NEED_BUILD = "12"; // must match BUILD in Code.gs
 const POLL_MS = 10000;
 const CLASSES = [
   "1",
@@ -302,15 +302,24 @@ function setMode(m) {
   mode = m;
   const up = m === "up";
   $("#lh").textContent = up ? "Request an account" : "Sign in";
-  $("#lsub").textContent = up ? "The Master Admin will review your request. You will get an email once it is approved." : "Use your TuitionPro ID to continue.";
+  $("#lsub").textContent = up ? "The Master Admin will review your request. You will get an email once it is approved." : "Use your TuitionPro ID, phone number or email to continue.";
   ["lnamew", "lemailw", "lphonew"].forEach((i) => ($("#" + i).hidden = !up));
   $("#lremw").hidden = up;
   $("#lname").required = $("#lemail").required = $("#lphone").required = up; // email + phone are compulsory for sign-up
   $("#lbtn").textContent = up ? "Send sign-up request" : "Sign in";
   $("#lpw").autocomplete = up ? "new-password" : "current-password";
+  $("#lidt").textContent = up ? "Choose an ID" : "ID, phone or email";
+  $("#lid").placeholder = up ? "e.g. taufiq.academy" : "ID, phone number or email";
+  showPw(false);
   $("#lerr").textContent = ""; $("#lok").textContent = "";
   $("#ltab_in").classList.toggle("on", !up); $("#ltab_up").classList.toggle("on", up);
 }
+function showPw(on) {
+  $("#lpw").type = on ? "text" : "password";
+  $("#pwf").classList.toggle("show", on);
+  const b = $("#pwf .pwb"), t = on ? "Hide password" : "Show password"; b.title = t; b.setAttribute("aria-label", t);
+}
+function togglePw() { showPw($("#lpw").type === "password"); $("#lpw").focus(); }
 /* Remember me: keeps only the last ID on this device. The password is never stored by the app
    (your browser's own password manager can fill it in). */
 function rememberLoad() {
@@ -339,7 +348,7 @@ $("#lf").onsubmit = async (e) => {
     } else {
       const j = await api("login", { id: $("#lid").value, pw: $("#lpw").value });
       if ($("#lrem").checked) localStorage.setItem("tp_remember_id", $("#lid").value.trim()); else localStorage.removeItem("tp_remember_id");
-      TOKEN = j.token; localStorage.setItem("tok", TOKEN); $("#lpw").value = "";
+      TOKEN = j.token; localStorage.setItem("tok", TOKEN); $("#lpw").value = ""; showPw(false);
       if (j.data) { applyData(j); cacheSave(); status("", "Synced"); } else await load(false); // login already returns the data
     }
   } catch (x) { $("#lerr").textContent = x.message; }
@@ -383,7 +392,7 @@ function go(r) {
   if (route === "results" && r !== "results" && !rsGuard()) return;
   if (route === "settings" && r !== "settings") { if (sdirty() && !confirm("You have unsaved settings. Leave without saving?")) return; SETD = null; }
   route = r; history.replaceState(null, "", "#" + r); $("#app").classList.remove("mob"); closePops(); render();
-  const v = $("#view"); v.classList.remove("vin"); void v.offsetWidth; v.classList.add("vin"); } // page-change animation (only on a tab click, not on background refreshes)
+  const v = $("#view"); v.classList.remove("vin"); void v.offsetWidth; v.classList.add("vin"); v.onanimationend = (e) => { if (e.target === v) v.classList.remove("vin"); }; } // page-change animation (only on a tab click, not on background refreshes)
 function toggleSb() {
   const a = $("#app");
   if (innerWidth <= 820) a.classList.toggle("mob");
