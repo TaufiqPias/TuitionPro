@@ -61,19 +61,40 @@ const SCHOOLS = [
 ];
 // Suggestions = the built-in list + any school/college already typed for another student
 const schoolList = () => [...new Set([...SCHOOLS, ...DB.Students.map((s) => String(s.school || "").trim()).filter(Boolean)])].sort((x, y) => x.localeCompare(y));
-const THEMES = {
-  ocean: "#2f7de1",
-  emerald: "#16a368",
-  violet: "#7c4fe0",
-  rose: "#e0457b",
-  amber: "#e08a0b",
-  teal: "#0e9aa7",
-  indigo: "#4552d9",
-  sunset: "#e5622f",
-  slate: "#475569",
-  midnight: "#0f1624",
-  forest: "#10201a",
-};
+const THEME_LIST = [
+  { k: "ocean", n: "Ocean Breeze", dark: false, sw: "linear-gradient(135deg, #2f7de1 0 38%, #6aa9f5 38% 62%, #e8f1fb 62%)" },
+  { k: "emerald", n: "Emerald Isle", dark: false, sw: "linear-gradient(135deg, #16a368 0 38%, #5dd39e 38% 62%, #e6f6ee 62%)" },
+  { k: "violet", n: "Violet Haze", dark: false, sw: "linear-gradient(135deg, #7c4fe0 0 38%, #a889f2 38% 62%, #f0eafc 62%)" },
+  { k: "rose", n: "Rose Petal", dark: false, sw: "linear-gradient(135deg, #e0457b 0 38%, #f07ca1 38% 62%, #fdeaf0 62%)" },
+  { k: "amber", n: "Amber Glow", dark: false, sw: "linear-gradient(135deg, #e08a0b 0 38%, #f2b14d 38% 62%, #fdf3e1 62%)" },
+  { k: "teal", n: "Deep Teal", dark: false, sw: "linear-gradient(135deg, #0e9aa7 0 38%, #4cc7d0 38% 62%, #e1f5f5 62%)" },
+  { k: "indigo", n: "Indigo Dusk", dark: false, sw: "linear-gradient(135deg, #4552d9 0 38%, #7b86ee 38% 62%, #e8ebfb 62%)" },
+  { k: "sunset", n: "Sunset Blaze", dark: false, sw: "linear-gradient(135deg, #e5622f 0 38%, #f4906a 38% 62%, #fdece4 62%)" },
+  { k: "slate", n: "Slate Mist", dark: false, sw: "linear-gradient(135deg, #475569 0 38%, #7c8ba0 38% 62%, #eceff3 62%)" },
+  { k: "coral", n: "Coral Reef", dark: false, sw: "linear-gradient(135deg, #F24C3D 0 38%, #FF6759 38% 62%, #fff1ef 62%)" },
+  { k: "lavender", n: "Lavender Dream", dark: false, sw: "linear-gradient(135deg, #A36278 0 38%, #A79ECD 38% 62%, #f4f1fa 62%)" },
+  { k: "cantaloupe", n: "Cantaloupe Pop", dark: false, sw: "linear-gradient(135deg, #FF6700 0 38%, #FF9200 38% 62%, #fffbd0 62%)" },
+  { k: "sandstone", n: "Desert Sand", dark: false, sw: "linear-gradient(135deg, #548D95 0 38%, #76C1C3 38% 62%, #faf3e8 62%)" },
+  { k: "wabi", n: "Wabi-Sabi", dark: false, sw: "linear-gradient(135deg, #998EBF 0 38%, #8EBF90 38% 62%, #f3efe8 62%)" },
+  { k: "vaporwave", n: "Vaporwave Candy", dark: false, sw: "linear-gradient(135deg, #8B87FA 0 38%, #E386F0 38% 62%, #f7f2ff 62%)" },
+  { k: "meadow", n: "Spring Meadow", dark: false, sw: "linear-gradient(135deg, #467326 0 38%, #6EA637 38% 62%, #f6ffe0 62%)" },
+  { k: "blossom", n: "Cherry Blossom", dark: false, sw: "linear-gradient(135deg, #CC548F 0 38%, #E68F29 38% 62%, #fffae6 62%)" },
+  { k: "pastel", n: "Pastel Sky", dark: false, sw: "linear-gradient(135deg, #5b8fbf 0 38%, #9ac3e6 38% 62%, #FEFFED 62%)" },
+  { k: "mint", n: "Fresh Mint", dark: false, sw: "linear-gradient(135deg, #2a9d78 0 38%, #7AF065 38% 62%, #effff6 62%)" },
+  { k: "minty", n: "Minty Bubblegum", dark: false, sw: "linear-gradient(135deg, #20997B 0 38%, #68CCB3 38% 62%, #effff4 62%)" },
+  { k: "soul", n: "Soul Sunrise", dark: false, sw: "linear-gradient(135deg, #F27141 0 38%, #D5E386 38% 62%, #fff9e0 62%)" },
+  { k: "seafoam", n: "Sea Foam", dark: false, sw: "linear-gradient(135deg, #698777 0 38%, #8FC9C9 38% 62%, #eef9f9 62%)" },
+  { k: "lagoon", n: "Tropical Lagoon", dark: false, sw: "linear-gradient(135deg, #0396A6 0 38%, #04BFAD 38% 62%, #e8f6f8 62%)" },
+  { k: "olive", n: "Olive Grove", dark: false, sw: "linear-gradient(135deg, #4A6B55 0 38%, #859E6A 38% 62%, #f4f6ee 62%)" },
+  { k: "gold", n: "Golden Hour", dark: false, sw: "linear-gradient(135deg, #A0834E 0 38%, #BD9F69 38% 62%, #f8f5ef 62%)" },
+  { k: "deco", n: "Art Deco", dark: false, sw: "linear-gradient(135deg, #593854 0 38%, #D9AA71 38% 62%, #f7efe3 62%)" },
+  { k: "aqua", n: "Aqua Waves", dark: false, sw: "linear-gradient(135deg, #0388A6 0 38%, #82D0D9 38% 62%, #e8f8fb 62%)" },
+  { k: "midnight", n: "Midnight Sky", dark: true, sw: "linear-gradient(135deg, #5b9dff 0 38%, #3b6fd4 38% 62%, #0f1624 62%)" },
+  { k: "forest", n: "Forest Night", dark: true, sw: "linear-gradient(135deg, #4cc38a 0 38%, #2f9a68 38% 62%, #10201a 62%)" },
+  { k: "neon-lime", n: "Neon Lime", dark: true, sw: "linear-gradient(135deg, #C3EB00 0 38%, #00D6DD 38% 62%, #13140F 62%)" },
+  { k: "synthwave", n: "Synthwave Nights", dark: true, sw: "linear-gradient(135deg, #F06BF2 0 38%, #d98af5 38% 62%, #070B26 62%)" },
+  { k: "noir", n: "Rose Gold Noir", dark: true, sw: "linear-gradient(135deg, #CF9982 0 38%, #E6C8BE 38% 62%, #11171C 62%)" },
+];
 const ICON = {
   dash: '<path d="M4 13h6V4H4zM14 20h6v-9h-6zM4 20h6v-4H4zM14 8h6V4h-6z"/>',
   stu: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.5 3-6 6.5-6s6.5 2.5 6.5 6M16 4.5a3.5 3.5 0 0 1 0 7M18 14c2 .7 3.5 2.6 3.5 6"/>',
@@ -81,6 +102,7 @@ const ICON = {
   fee: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18M7 15h4"/>',
   res: '<path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/>',
   pro: '<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.5-6.5 8-6.5s8 2.5 8 6.5"/>',
+  set: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   acc: '<path d="M12 3l8 3v6c0 4.5-3.2 7.8-8 9-4.8-1.2-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
   wa: '<path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.3-.15-1.263-.465-2.403-1.485-.888-.795-1.484-1.77-1.66-2.07-.174-.3-.019-.465.13-.615.136-.135.301-.345.451-.523.146-.181.194-.301.297-.496.1-.21.049-.375-.025-.524-.075-.15-.672-1.62-.922-2.206-.24-.584-.487-.51-.672-.51-.172-.015-.371-.015-.571-.015-.2 0-.523.074-.797.359-.273.3-1.045 1.02-1.045 2.475s1.07 2.865 1.219 3.075c.149.18 2.095 3.195 5.076 4.483.709.3 1.263.489 1.694.626.712.226 1.36.194 1.872.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z"/>',
   arch: '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11h14V8M10 12h4"/>',
@@ -104,6 +126,7 @@ const VIEWS = {
   results: "Results",
   wa: "WhatsApp",
   profile: "My profile",
+  settings: "Settings",
   admin: "Admin panel",
 };
 const NAVICON = {
@@ -115,6 +138,7 @@ const NAVICON = {
   results: "res",
   wa: "wa",
   profile: "pro",
+  settings: "set",
   admin: "acc",
 };
 
@@ -266,7 +290,7 @@ setInterval(async () => { // real-time sharing + sign-up notifications
   try {
     const j = await api("ping");
     if (ME.role === "master" && j.pending !== undefined) {
-      if (j.pending > PEND) toast("New sign-up request waiting for approval");
+      if (j.pending > PEND && SET.nSignup) toast("New sign-up request waiting for approval");
       PEND = j.pending; setBell();
     }
     if (j.ver !== VER) load(false);
@@ -330,12 +354,13 @@ async function logout() {
 
 /* ============ SHELL ============ */
 function buildNav() {
-  const BOTTOM = ["archive", "admin"]; // pinned to the bottom of the sidebar
+  const NAV_HIDE = ["profile"], NAV_WA = ["wa"], NAV_BOTTOM = ["archive", "settings", "admin"]; // profile lives in the account menu
   const keys = Object.keys(VIEWS).filter((k) => k !== "admin" || ME.role === "master");
   const item = (k) => `<a data-r="${k}" onclick="go('${k}')" title="${VIEWS[k]}">${svg(NAVICON[k])}<span>${VIEWS[k]}</span>${k === "admin" || k === "fees" ? '<em class="nb" hidden></em>' : ""}</a>`;
+  const part = (L) => keys.filter((k) => L.includes(k)).map(item).join("");
   $("#nav").innerHTML =
-    keys.filter((k) => !BOTTOM.includes(k)).map(item).join("") +
-    `<div class="navbot">${keys.filter((k) => BOTTOM.includes(k)).map(item).join("")}</div>`;
+    keys.filter((k) => ![...NAV_HIDE, ...NAV_WA, ...NAV_BOTTOM].includes(k)).map(item).join("") +
+    `<div class="navwa">${part(NAV_WA)}</div><div class="navbot">${part(NAV_BOTTOM)}</div>`;
 }
 function setBell() { // notification bell + nav badge for pending sign-ups
   const master = ME.role === "master";
@@ -356,11 +381,18 @@ function applyMe() {
 function go(r) {
   if (route === "attendance" && r !== "attendance" && AT.dirty.size && !confirm("You have unsaved attendance changes. Leave without saving?")) return;
   if (route === "results" && r !== "results" && !rsGuard()) return;
-  route = r; history.replaceState(null, "", "#" + r); $("#app").classList.remove("mob"); closePops(); render(); }
+  route = r; history.replaceState(null, "", "#" + r); $("#app").classList.remove("mob"); closePops(); render();
+  const v = $("#view"); v.classList.remove("vin"); void v.offsetWidth; v.classList.add("vin"); } // page-change animation (only on a tab click, not on background refreshes)
 function toggleSb() {
   const a = $("#app");
-  if (innerWidth <= 820) a.classList.toggle("mob");
-  else { a.classList.toggle("collapsed"); localStorage.setItem("sbc", a.classList.contains("collapsed") ? 1 : ""); }
+  if (innerWidth <= 820) { a.classList.toggle("mob"); return; }
+  if (a.classList.contains("hidden-sb")) { a.classList.remove("hidden-sb"); localStorage.removeItem("sbh"); return; } // bring a hidden sidebar back
+  a.classList.toggle("collapsed"); localStorage.setItem("sbc", a.classList.contains("collapsed") ? 1 : "");
+}
+function hideSb() { // the button inside the sidebar: hide it completely (the menu button in the top bar shows it again)
+  const a = $("#app");
+  if (innerWidth <= 820) { a.classList.remove("mob"); return; }
+  a.classList.add("hidden-sb"); localStorage.setItem("sbh", "1");
 }
 function closePops() { document.querySelectorAll(".pop").forEach((p) => p.classList.remove("on")); }
 function togglePop(e, id) { e.stopPropagation(); const p = $("#" + id), was = p.classList.contains("on"); closePops(); p.classList.toggle("on", !was); }
@@ -373,7 +405,7 @@ function render() {
   if (route === "admin" && ME.role !== "master") route = "dash";
   document.querySelectorAll(".nav a").forEach((a) => a.classList.toggle("on", a.dataset.r === route));
   $("#title").textContent = VIEWS[route];
-  ({ dash: vDash, students: vStudents, archive: vArchive, attendance: vAttendance, fees: vFees, results: vResults, wa: vWA, profile: vProfile, admin: vAdmin }[route] || vSoon)();
+  ({ dash: vDash, students: vStudents, archive: vArchive, attendance: vAttendance, fees: vFees, results: vResults, wa: vWA, profile: vProfile, settings: vSettings, admin: vAdmin }[route] || vSoon)();
   feeBadge();
 }
 
@@ -1571,6 +1603,50 @@ async function createU() {
 function resetU(id) { const pw = prompt(`New password for @${id} (6+ characters)`); if (pw) adminDo("resetPassword", { id, pw }, "Password reset"); }
 function removeU(id) { if (confirm(`Remove @${id}? They can no longer sign in. Their Drive folder and data are kept.`)) adminDo("removeUser", { id }, "User removed"); }
 
+/* ============ SETTINGS ============ */
+const SET_DEF = { dateFmt: "dmy", currency: "৳", weekStart: "sat", compact: false, nomotion: false, nSignup: true, nFees: true, nSound: false };
+const SET = Object.assign({}, SET_DEF, (() => { try { return JSON.parse(localStorage.getItem("tp_settings") || "{}"); } catch (e) { return {}; } })());
+function applySettings() { document.body.classList.toggle("compact", !!SET.compact); document.body.classList.toggle("nomotion", !!SET.nomotion); }
+function setSet(k, v) { SET[k] = v; localStorage.setItem("tp_settings", JSON.stringify(SET)); applySettings(); }
+applySettings();
+function exportAll() {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([JSON.stringify({ exported: new Date().toISOString(), data: DB }, null, 2)], { type: "application/json" }));
+  a.download = "tuitionpro-backup-" + new Date().toISOString().slice(0, 10) + ".json"; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+function clearCache() { localStorage.removeItem("tp_cache"); toast("Cached data cleared"); }
+function vSettings() {
+  const row = (t, d, c) => `<div class="srow"><div class="st"><b>${t}</b><small class="mut">${d}</small></div><div class="sc">${c}</div></div>`;
+  const tg = (k) => `<label class="tg"><input type="checkbox" ${SET[k] ? "checked" : ""} onchange="setSet('${k}', this.checked)"><i></i></label>`;
+  const sel = (k, o) => `<select class="in" onchange="setSet('${k}', this.value)">${o.map(([v, l]) => `<option value="${esc(v)}" ${SET[k] === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+  const btn = (l, f, p) => `<button class="btn ${p || ""}" onclick="${f}">${l}</button>`;
+  const card = (h, r) => `<div class="glass pad scard"><h3>${h}</h3>${r.join("")}</div>`;
+  $("#view").innerHTML = `<div class="sgrid">${[
+    card("General", [
+      row("Institute profile", "Name, logo, address and letterhead", btn("Edit profile", "go('profile')")),
+      row("Date format", "How dates are shown", sel("dateFmt", [["dmy", "DD/MM/YYYY"], ["mdy", "MM/DD/YYYY"], ["ymd", "YYYY-MM-DD"]])),
+      row("Currency symbol", "Shown next to fees", sel("currency", [["৳", "৳ Taka"], ["$", "$ Dollar"], ["₹", "₹ Rupee"], ["£", "£ Pound"]])),
+      row("Week starts on", "For attendance calendars", sel("weekStart", [["sat", "Saturday"], ["sun", "Sunday"], ["mon", "Monday"]]))]),
+    card("Appearance", [
+      row("Theme", "Choose from " + THEME_LIST.length + " colour themes", `<button class="btn" onclick="togglePop(event,'pop')">Choose theme</button>`),
+      row("Compact tables", "Tighter rows to fit more on screen", tg("compact")),
+      row("Reduce motion", "Turn off animations and transitions", tg("nomotion"))]),
+    card("Notifications", [
+      row("Sign-up requests", "Alert when a new request arrives (Master Admin)", tg("nSignup")),
+      row("Fee reminders", "Remind me about unpaid tuition fees", tg("nFees")),
+      row("Sound", "Play a sound with alerts", tg("nSound"))]),
+    card("Data & backup", [
+      row("Sync now", "Refresh everything from the server", btn("Sync", "load(false)")),
+      row("Export all data", "Download students, fees, attendance and results as a JSON file", btn("Export", "exportAll()")),
+      row("Clear cached data", "Removes the copy stored on this device. It reloads on next start", btn("Clear", "clearCache()"))]),
+    card("Account", [
+      row("Signed in as", `@${esc(ME.id)} · ${ME.role === "master" ? "Master Admin" : "User"}`, btn("Sign out", "logout()", "d"))]),
+    card("About", [
+      row("TuitionPro", "Build " + NEED_BUILD, `<small class="mut">© Taufiq Pias (WolfSoft)</small>`)]),
+  ].join("")}</div>`;
+}
+
 function vSoon() {
   const t = {
     attendance: [
@@ -2022,14 +2098,13 @@ fetch("watermark.svg")
   .catch(() => {});
 
 /* ============ INIT ============ */
-$("#sw").innerHTML = Object.entries(THEMES)
-  .map(
-    ([k, c]) =>
-      `<button data-t="${k}" title="${k}" style="background:${c}" onclick="setTheme('${k}')"></button>`,
-  )
+$("#sw").innerHTML = [["Light themes", false], ["Dark themes", true]]
+  .map(([h, d]) => `<div class="swg">${h}</div>` + THEME_LIST.filter((t) => t.dark === d)
+    .map((t) => `<button type="button" class="swr" data-t="${t.k}" onclick="setTheme('${t.k}')"><i style="background:${t.sw}"></i><span>${t.n}</span></button>`).join(""))
   .join("");
 setTheme(localStorage.getItem("theme") || "ocean");
 if (localStorage.getItem("sbc")) $("#app").classList.add("collapsed");
+if (localStorage.getItem("sbh")) $("#app").classList.add("hidden-sb");
 route = (location.hash || "#dash").slice(1);
 if (!VIEWS[route]) route = "dash";
 buildNav();
