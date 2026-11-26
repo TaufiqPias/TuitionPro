@@ -318,8 +318,12 @@ async function logout() {
 
 /* ============ SHELL ============ */
 function buildNav() {
+  const BOTTOM = ["archive", "admin"]; // pinned to the bottom of the sidebar
   const keys = Object.keys(VIEWS).filter((k) => k !== "admin" || ME.role === "master");
-  $("#nav").innerHTML = keys.map((k) => `<a data-r="${k}" onclick="go('${k}')" title="${VIEWS[k]}">${svg(NAVICON[k])}<span>${VIEWS[k]}</span>${k === "admin" || k === "fees" ? '<em class="nb" hidden></em>' : ""}</a>`).join("");
+  const item = (k) => `<a data-r="${k}" onclick="go('${k}')" title="${VIEWS[k]}">${svg(NAVICON[k])}<span>${VIEWS[k]}</span>${k === "admin" || k === "fees" ? '<em class="nb" hidden></em>' : ""}</a>`;
+  $("#nav").innerHTML =
+    keys.filter((k) => !BOTTOM.includes(k)).map(item).join("") +
+    `<div class="navbot">${keys.filter((k) => BOTTOM.includes(k)).map(item).join("")}</div>`;
 }
 function setBell() { // notification bell + nav badge for pending sign-ups
   const master = ME.role === "master";
