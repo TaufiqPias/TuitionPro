@@ -656,7 +656,7 @@ function editStudent(id) {
    <label class="full">School/College Name<input class="in" id="m_school" list="m_schools" autocomplete="off" placeholder="Type or pick from suggestions" value="${v("school")}"><datalist id="m_schools">${schoolList().map((x) => `<option value="${esc(x)}">`).join("")}</datalist></label>
    <label class="full">Assign Class &amp; Batch<select class="in" id="m_batch"><option value="">Select class &amp; batch</option>${B.map((b) => `<option value="${esc(b.id)}" ${cur === b.id ? "selected" : ""}>${esc(bLabel(b))}</option>`).join("")}</select></label>
    <label>Student ID (automatic)<input class="in" id="m_sid" readonly value="${v("sid")}" placeholder="Pick a batch"></label>
-   <label>Joined<input class="in" id="m_joined" type="date" value="${s.joined || new Date().toISOString().slice(0, 10)}"></label>
+   <label>Joined${dateInp("m_joined", s.joined || new Date().toISOString().slice(0, 10))}</label>
    <label>Fee plan<select class="in" id="m_feeType" onchange="feePlanUI()"><option ${s.feeType !== "Course" ? "selected" : ""}>Monthly</option><option ${s.feeType === "Course" ? "selected" : ""}>Course</option></select></label>
    <label><span id="m_feeLbl">Monthly Fee</span><input class="in" id="m_fee" type="number" min="0" value="${v("fee")}"></label>
    <label id="m_ffw">Billing starts<input class="in" id="m_feeFrom" type="month" value="${esc(s.feeFrom || (s.joined || new Date().toISOString().slice(0, 10)).slice(0, 7))}"></label>
@@ -794,7 +794,7 @@ function archRows() {
     return `<tr><td><b>${esc(s.sid)}</b></td><td>${esc(s.name)}${s.school ? `<small class="mut" style="display:block">${esc(s.school)}</small>` : ""}</td>
     <td>${esc(clsLabel(s.class))}${b ? `<small class="mut" style="display:block">${esc(b.section)} ${t12(b.start)} ${daysTag(b)}</small>` : ""}</td>
     <td><span class="chip s-Active">${esc(clsLabel(s.nextClass || nextClassOf(s.class)))} · ${esc(s.nextYear || "")}</span></td>
-    <td>${esc(s.archivedAt || "")}</td><td>${esc(s.guardian)}</td><td>${esc(s.phone)}</td>
+    <td>${fmtD(s.archivedAt)}</td><td>${esc(s.guardian)}</td><td>${esc(s.phone)}</td>
     <td style="text-align:right"><span class="ra"><button class="btn p" onclick="reenrollModal('${esc(s.id)}')">${svg("undo")}<span style="margin-left:6px">Re-enroll</span></button>${icoBtn("del", "Delete student", `delStudent('${esc(s.id)}')`, "trash")}</span></td></tr>`;
   }).join("") || `<tr><td colspan="8"><div class="empty">${archStu().length ? "No archived students match." : "Nothing archived yet. Use the archive button on a student row."}</div></td></tr>`;
 }
@@ -811,7 +811,7 @@ function reenrollModal(id) {
     ${mine.length ? `<optgroup label="${esc(clsLabel(nc))}">${mine.map(opt).join("")}</optgroup>` : ""}
     ${rest.length ? `<optgroup label="Other classes">${rest.map(opt).join("")}</optgroup>` : ""}</select></label>
    ${mine.length ? "" : `<div class="full warnbox">No ${esc(clsLabel(nc))} batch exists yet. Create one with <b>Add Class/Batch</b>, or pick another class above.</div>`}
-   <label>Joined<input class="in" id="r_joined" type="date" value="${joined}"></label>
+   <label>Joined${dateInp("r_joined", joined)}</label>
    <label>Student ID (new, automatic)<input class="in" id="r_sid" readonly></label>
    <label>Fee plan<select class="in" id="r_feeType"><option ${s.feeType !== "Course" ? "selected" : ""}>Monthly</option><option ${s.feeType === "Course" ? "selected" : ""}>Course</option></select></label>
    <label>Fee<input class="in" id="r_fee" type="number" min="0" value="${esc(s.fee)}"></label>
@@ -852,7 +852,7 @@ async function exportXlsx() {
       "Fee plan": s.feeType === "Course" ? "Course" : "Monthly",
       "Monthly/Course Fee": s.fee,
       Status: s.status,
-      Joined: s.joined,
+      Joined: fmtD(s.joined),
     };
   });
   if (!L.length) { toast("Nothing to export"); return; }
@@ -1106,7 +1106,7 @@ function vAttendance() {
    <div class="tabs"><button class="${take ? "on" : ""}" onclick="atSet('tab','take')">Take attendance</button><button class="${take ? "" : "on"}" onclick="atSet('tab','report')">Monthly report</button></div>
    <select class="in grow" id="at_batch">${B.map((b) => `<option value="${esc(b.id)}" ${AT.batch === b.id ? "selected" : ""}>${esc(bLabel(b))}</option>`).join("")}</select>
    ${take
-     ? `${icoBtn("", "Previous day", "atDay(-1)", "prev")}<input class="in" type="date" id="at_date" value="${AT.date}">${icoBtn("", "Next day", "atDay(1)", "next")}<button class="btn" onclick="atSet('date', dKey(new Date()))">Today</button>`
+     ? `${icoBtn("", "Previous day", "atDay(-1)", "prev")}${dateInp("at_date", AT.date)}${icoBtn("", "Next day", "atDay(1)", "next")}<button class="btn" onclick="atSet('date', dKey(new Date()))">Today</button>`
      : `${icoBtn("", "Previous month", "atMonth(-1)", "prev")}<input class="in" type="month" id="at_month" value="${AT.month}">${icoBtn("", "Next month", "atMonth(1)", "next")}<button class="btn" onclick="atExport()">Export Excel</button>`}
   </div>
   <div id="at_body"></div>`;
@@ -1332,7 +1332,7 @@ function collectFee(id, month) {
   ${dues.length ? `<div class="pills" style="margin-bottom:12px">${dues.slice(0, 8).map((r) => `<span class="chip ${r.paid ? "s-Partial" : "s-Pending"}">${monthLabel(r.m)} ${money(r.pend)}</span>`).join("")}${dues.length > 8 ? `<span class="mut">+${dues.length - 8} more</span>` : ""}</div>` : ""}
   <div class="f">
    <label>Amount (${SET.currency})<input class="in" id="c_amt" type="number" min="1" value="${def}"></label>
-   <label>Payment date<input class="in" id="c_date" type="date" value="${dKey(new Date())}"></label>
+   <label>Payment date${dateInp("c_date", dKey(new Date()))}</label>
    ${I.type === "Monthly" ? `<label class="full">Apply to<select class="in" id="c_to"><option value="">Oldest dues first${dues.length ? "" : " (advance payment)"}</option>${dues.map((r) => `<option value="${r.m}" ${month === r.m ? "selected" : ""}>${monthLabel(r.m)} - pending ${money(r.pend)}</option>`).join("")}</select></label>` : ""}
    <label>Method<select class="in" id="c_method">${METHODS.map((m) => `<option>${m}</option>`).join("")}</select></label>
    <label>Note<input class="in" id="c_note" placeholder="Optional"></label>
@@ -1416,7 +1416,7 @@ function receiptHtml(rc) {
    h1{font-size:18px;margin:0}.m{color:#64809b;font-size:12px}table{width:100%;border-collapse:collapse;margin:12px 0}td,th{padding:7px 4px;border-bottom:1px solid #e3eaf2;text-align:left}th:last-child,td:last-child{text-align:right}
    .t{font-size:16px;font-weight:700}.sig{display:flex;justify-content:space-between;margin-top:42px;color:#64809b;font-size:12px}.sig span{border-top:1px solid #9bb0c5;padding-top:4px;min-width:150px;text-align:center}
    @media print{body{padding:0}.box{border:0}}</style></head><body><div class="box">
-   <div class="h">${ME.logo ? `<img src="${esc(ME.logo)}">` : ""}<div><h1>${esc(ME.name || "TuitionPro")}</h1><div class="m">${esc([ME.address, ME.phone].filter(Boolean).join(" | "))}</div></div><div style="margin-left:auto;text-align:right"><b>FEE RECEIPT</b><div class="m">${esc(rc)}<br>${esc(R[0].date)}</div></div></div>
+   <div class="h">${ME.logo ? `<img src="${esc(ME.logo)}">` : ""}<div><h1>${esc(ME.name || "TuitionPro")}</h1><div class="m">${esc([ME.address, ME.phone].filter(Boolean).join(" | "))}</div></div><div style="margin-left:auto;text-align:right"><b>FEE RECEIPT</b><div class="m">${esc(rc)}<br>${fmtD(R[0].date)}</div></div></div>
    <div><b>${esc(s.name)}</b> <span class="m">(${esc(s.sid)})</span><div class="m">${b ? esc(bLabel(b)) : ""}</div></div>
    <table><thead><tr><th>For</th><th>Amount</th></tr></thead><tbody>${R.map((r) => `<tr><td>${r.kind === "course" ? "Course fee" : monthLabel(r.month) + " tuition fee"}</td><td>${money(r.amount)}</td></tr>`).join("")}
    <tr><td class="t">Total received (${esc(R[0].method)})</td><td class="t">${money(tot)}</td></tr></tbody></table>
@@ -1598,17 +1598,46 @@ function resetU(id) { const pw = prompt(`New password for @${id} (6+ characters)
 function removeU(id) { if (confirm(`Remove @${id}? They can no longer sign in. Their Drive folder and data are kept.`)) adminDo("removeUser", { id }, "User removed"); }
 
 /* ============ SETTINGS ============ */
-const SET_DEF = { dateFmt: "auto", currency: "৳", weekStart: "sat", compact: false, nomotion: false, nSignup: true, nFees: true, nSound: false };
+const SET_DEF = { dateFmt: "dmy", currency: "৳", weekStart: "sat", compact: false, nomotion: false, nSignup: true, nFees: true, nSound: false };
 const SET = Object.assign({}, SET_DEF, (() => { try { return JSON.parse(localStorage.getItem("tp_settings") || "{}"); } catch (e) { return {}; } })());
+if (!["dmy", "dmmy"].includes(SET.dateFmt)) SET.dateFmt = "dmy"; // only DD/MM/YYYY or DD-MMM-YY are offered
 let SETD = null; // unsaved edits made on the Settings page
 const sdirty = () => !!SETD && JSON.stringify(SETD) !== JSON.stringify(SET);
 function applySettings() { document.body.classList.toggle("compact", !!SET.compact); document.body.classList.toggle("nomotion", !!SET.nomotion); }
 applySettings();
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function dShow(d) { // every date in the portal goes through here
-  if (isNaN(d)) return "";
-  const dd = String(d.getDate()).padStart(2, "0"), mm = String(d.getMonth() + 1).padStart(2, "0"), y = d.getFullYear();
-  return SET.dateFmt === "dmy" ? `${dd}/${mm}/${y}` : SET.dateFmt === "mdy" ? `${mm}/${dd}/${y}` : SET.dateFmt === "ymd" ? `${y}-${mm}-${dd}` : d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  if (!(d instanceof Date) || isNaN(d)) return "";
+  const dd = pad2(d.getDate()), y = d.getFullYear();
+  return SET.dateFmt === "dmmy" ? `${dd}-${MON[d.getMonth()]}-${String(y).slice(2)}` : `${dd}/${pad2(d.getMonth() + 1)}/${y}`;
 }
+const dHint = () => (SET.dateFmt === "dmmy" ? "DD-MMM-YY" : "DD/MM/YYYY");
+function dParse(t) { // typed text -> YYYY-MM-DD ("" when empty, null when it cannot be read)
+  t = String(t || "").trim(); if (!t) return "";
+  const mk = (y, mo, d) => { y = +y; if (y < 100) y += 2000; const x = new Date(y, mo - 1, d); return x.getFullYear() === y && x.getMonth() === mo - 1 && x.getDate() === +d ? y + "-" + pad2(mo) + "-" + pad2(d) : null; };
+  let m;
+  if ((m = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/))) return mk(m[1], +m[2], +m[3]);
+  if ((m = t.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2}|\d{4})$/))) return mk(m[3], +m[2], +m[1]);
+  if ((m = t.match(/^(\d{1,2})[\s\/\-.]+([A-Za-z]{3,})[\s\/\-.,]*(\d{2}|\d{4})$/))) { const i = MON.findIndex((x) => x.toLowerCase() === m[2].slice(0, 3).toLowerCase()); return i < 0 ? null : mk(m[3], i + 1, +m[1]); }
+  return null;
+}
+/* Date field that always shows the chosen format. The real <input type="date"> (same id, ISO value) stays
+   hidden so all existing code keeps reading and listening to it; the visible box is text + a calendar button. */
+function dateInp(id, v, title) {
+  return `<span class="dp"><input class="in dtx" id="${id}_t" value="${esc(fmtD(v || ""))}" placeholder="${dHint()}" title="${esc(title || dHint())}" autocomplete="off"><input type="date" id="${id}" value="${esc(v || "")}" tabindex="-1" aria-hidden="true"><button type="button" class="ib dpb" onclick="dpOpen('${id}')" title="Pick a date"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 10h18"/></svg></button></span>`;
+}
+function dpOpen(id) { const n = $("#" + id); if (!n) return; try { n.showPicker(); } catch (e) { n.focus(); n.click(); } }
+document.addEventListener("change", (e) => {
+  const t = e.target; if (!t || !t.closest) return;
+  const w = t.closest(".dp"); if (!w) return;
+  const nat = w.querySelector("input[type=date]"), txt = w.querySelector(".dtx");
+  if (t === nat) { txt.value = fmtD(nat.value); return; }
+  if (t !== txt) return;
+  const iso = dParse(txt.value);
+  if (iso === null) { toast("Use the format " + dHint()); txt.value = fmtD(nat.value); return; }
+  nat.value = iso; txt.value = fmtD(iso);
+  nat.dispatchEvent(new Event("change", { bubbles: true }));
+}, true);
 function weekDays() { // DAYS rotated so the chosen week-start day comes first
   const i = Math.max(0, DAYS.findIndex((d) => d[0] === String(SET.weekStart || "sat").toUpperCase()));
   return [...DAYS.slice(i), ...DAYS.slice(0, i)];
@@ -1650,7 +1679,7 @@ function vSettings() {
   $("#view").innerHTML = `<div class="swrap"><div class="sgrid">${[
     card("General", [
       row("Institute profile", "Name, logo, address and letterhead", btn("Edit profile", "go('profile')")),
-      row("Date format", "How dates are shown everywhere", sel("dateFmt", [["auto", "Auto (23 Nov 2026)"], ["dmy", "DD/MM/YYYY"], ["mdy", "MM/DD/YYYY"], ["ymd", "YYYY-MM-DD"]])),
+      row("Date format", "How dates are shown everywhere", sel("dateFmt", [["dmy", "DD/MM/YYYY (23/11/2026)"], ["dmmy", "DD-MMM-YY (23-Nov-26)"]])),
       row("Currency symbol", "Shown next to fees, reports and receipts", sel("currency", [["৳", "৳ Taka"], ["$", "$ Dollar"], ["₹", "₹ Rupee"], ["£", "£ Pound"]])),
       row("Week starts on", "Order of the days when picking batch days", sel("weekStart", [["sat", "Saturday"], ["sun", "Sunday"], ["mon", "Monday"]]))]),
     card("Appearance", [
@@ -1823,7 +1852,7 @@ function editExam(id) {
    <label>Subject<input class="in" id="x_subj" autocomplete="off" placeholder="Type the subject" value="${esc(e ? e.subject : "")}"></label>
    <label class="full">Exam type<select class="in" id="x_type"><option value="">Select exam type</option>${EXAM_NAMES.map((n) => `<option ${e && e.type === n ? "selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
    <label class="full">Chapters covered<input class="in" id="x_chap" placeholder="e.g. Chapter 1-3, 5" value="${esc(e ? e.chapters : "")}"></label>
-   <label>Date<input class="in" id="x_date" type="date" value="${esc(e ? e.date : dKey(new Date()))}"></label>
+   <label>Date${dateInp("x_date", e ? e.date : dKey(new Date()))}</label>
    <label>Class &amp; Batch<select class="in" id="x_batch"><option value="">Select class &amp; batch</option>${B.map((b) => `<option value="${esc(b.id)}" ${defB === b.id ? "selected" : ""}>${esc(clsLabel(b.class) + " · " + bLabel(b))}</option>`).join("")}</select></label>
    <div class="full"><div class="lbl">Exam parts: use one, or combine several. Full marks of each part:</div>
     <div class="parts">${PARTS.map(([k, l, f]) => `<div class="part"><label class="chkline"><input type="checkbox" id="x_${k}_on" ${on(k, f) ? "checked" : ""} onchange="xCalc()"> ${l}</label><input class="in" type="number" min="0" step="any" id="x_${k}" placeholder="Full marks" value="${e && Number(e[f]) > 0 ? esc(e[f]) : k === "w" && !e ? 100 : ""}" oninput="xCalc()"></div>`).join("")}</div></div>
@@ -1976,7 +2005,7 @@ function rsHistory() {
    <select class="in" id="hb"><option value="">All batches</option>${sortBatches(DB.Batches).map((b) => `<option value="${esc(b.id)}" ${RS.sBatch === b.id ? "selected" : ""}>${esc(clsLabel(b.class) + " · " + bLabel(b))}</option>`).join("")}</select>
    <select class="in grow" id="hs"><option value="">Select a student</option>${S.map((s) => `<option value="${esc(s.id)}" ${RS.stu === s.id ? "selected" : ""}>${esc(s.name)} (${esc(s.sid)})</option>`).join("")}</select>
    <select class="in" id="hj"><option value="">All subjects</option>${subjList().map((s) => `<option ${RS.sSubj === s ? "selected" : ""}>${esc(s)}</option>`).join("")}</select>
-   <input class="in" type="date" id="hf" value="${esc(RS.from)}" title="From date"><input class="in" type="date" id="ht" value="${esc(RS.to)}" title="To date">
+   ${dateInp("hf", RS.from, "From date")}${dateInp("ht", RS.to, "To date")}
    <button class="btn" onclick="RS.from=RS.to=RS.sSubj='';rsHistory()">Clear</button>
    <button class="btn p" id="hpdf" onclick="rsStuPdf()">Export PDF</button></div><div id="rh_body"></div>`;
   $("#hb").onchange = (e) => { RS.sBatch = e.target.value; if (RS.stu && RS.sBatch && !S.some((s) => s.id === RS.stu)) RS.stu = ""; rsHistory(); };
