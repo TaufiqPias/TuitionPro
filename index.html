@@ -17,14 +17,9 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body data-theme="ocean" class="locked">
-    <script>
-      document.body.dataset.theme = localStorage.getItem("theme") || "ocean";
-    </script>
+    <script>document.body.dataset.theme = localStorage.getItem("theme") || "ocean";</script>
     <div class="loader on" id="loader">
-      <div class="spinner">
-        <span></span><span></span><span></span><span></span><span></span
-        ><span></span><span></span><span></span>
-      </div>
+      <div class="spinner"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div>
       <p id="loaderTxt">Loading TuitionPro…</p>
     </div>
 
@@ -36,50 +31,15 @@
         <h2 id="lh">Sign in</h2>
         <p class="mut" id="lsub">Use your TuitionPro ID to continue.</p>
         <div class="ltabs">
-          <button type="button" id="ltab_in" class="on" onclick="setMode('in')">
-            Sign in
-          </button>
-          <button type="button" id="ltab_up" onclick="setMode('up')">
-            Sign up
-          </button>
+          <button type="button" id="ltab_in" class="on" onclick="setMode('in')">Sign in</button>
+          <button type="button" id="ltab_up" onclick="setMode('up')">Sign up</button>
         </div>
-        <label id="lnamew" hidden
-          >Institute or trainer name<input
-            class="in"
-            id="lname"
-            autocomplete="organization"
-        /></label>
-        <label id="lemailw" hidden
-          >Email<input class="in" id="lemail" type="email" autocomplete="email"
-        /></label>
-        <label id="lphonew" hidden
-          >Phone number<input
-            class="in"
-            id="lphone"
-            type="tel"
-            inputmode="tel"
-            autocomplete="tel"
-            placeholder="e.g. 01712345678"
-        /></label>
-        <label
-          >ID<input
-            class="in"
-            id="lid"
-            autocomplete="username"
-            autocapitalize="none"
-            required
-        /></label>
-        <label
-          >Password<input
-            class="in"
-            id="lpw"
-            type="password"
-            autocomplete="current-password"
-            required
-        /></label>
-        <label class="lrem" id="lremw"
-          ><input type="checkbox" id="lrem" /> Remember me</label
-        >
+        <label id="lnamew" hidden>Institute or trainer name<input class="in" id="lname" autocomplete="organization" /></label>
+        <label id="lemailw" hidden>Email<input class="in" id="lemail" type="email" autocomplete="email" /></label>
+        <label id="lphonew" hidden>Phone number<input class="in" id="lphone" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g. 01712345678" /></label>
+        <label>ID<input class="in" id="lid" autocomplete="username" autocapitalize="none" required /></label>
+        <label>Password<input class="in" id="lpw" type="password" autocomplete="current-password" required /></label>
+        <label class="lrem" id="lremw"><input type="checkbox" id="lrem" /> Remember me</label>
         <div class="lerr" id="lerr"></div>
         <div class="lok" id="lok"></div>
         <button class="btn p wide" id="lbtn" type="submit">Sign in</button>
@@ -95,23 +55,6 @@
             <div class="bname" id="instName">TuitionPro</div>
             <div class="bsub">TuitionPro</div>
           </div>
-          <button
-            class="ib sbhide"
-            onclick="hideSb()"
-            title="Hide sidebar"
-            aria-label="Hide sidebar"
-          >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M15 6l-6 6 6 6" />
-            </svg>
-          </button>
         </div>
         <nav class="nav" id="nav"></nav>
         <div class="sbfoot">
@@ -135,47 +78,19 @@
           </button>
           <h1 id="title">Dashboard</h1>
           <button class="btn" id="importBtn" onclick="importModal()">
-            <svg
-              width="15"
-              height="15"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path d="M12 16V4M7 9l5-5 5 5M4 20h16" /></svg
-            ><span class="long">Import Students</span
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg><span class="long">Import Students</span
             ><span class="short">Import</span>
           </button>
           <button class="btn p" id="addBtn" onclick="editStudent()">
-            <b>+</b><span class="long">Add Student</span
+            <b>+</b><span class="long">Add student</span
             ><span class="short">Add</span>
           </button>
           <button class="btn" id="addBatchBtn" onclick="editBatch()">
             <b>+</b><span class="long">Add Class/Batch</span
             ><span class="short">Batch</span>
           </button>
-          <button
-            class="ib bell"
-            id="bell"
-            onclick="go('admin')"
-            title="Sign-up requests"
-            hidden
-          >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            >
-              <path
-                d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8M13.7 20a2 2 0 0 1-3.4 0"
-              />
-            </svg>
+          <button class="ib bell" id="bell" onclick="go('admin')" title="Sign-up requests" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8M13.7 20a2 2 0 0 1-3.4 0"/></svg>
             <i id="bellN" hidden>0</i>
           </button>
           <button class="ib" onclick="togglePop(event, 'pop')" title="Themes">

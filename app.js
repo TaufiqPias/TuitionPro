@@ -290,7 +290,7 @@ setInterval(async () => { // real-time sharing + sign-up notifications
   try {
     const j = await api("ping");
     if (ME.role === "master" && j.pending !== undefined) {
-      if (j.pending > PEND && SET.nSignup) toast("New sign-up request waiting for approval");
+      if (j.pending > PEND && SET.nSignup) { toast("New sign-up request waiting for approval"); beep(); }
       PEND = j.pending; setBell();
     }
     if (j.ver !== VER) load(false);
@@ -381,18 +381,13 @@ function applyMe() {
 function go(r) {
   if (route === "attendance" && r !== "attendance" && AT.dirty.size && !confirm("You have unsaved attendance changes. Leave without saving?")) return;
   if (route === "results" && r !== "results" && !rsGuard()) return;
+  if (route === "settings" && r !== "settings") { if (sdirty() && !confirm("You have unsaved settings. Leave without saving?")) return; SETD = null; }
   route = r; history.replaceState(null, "", "#" + r); $("#app").classList.remove("mob"); closePops(); render();
   const v = $("#view"); v.classList.remove("vin"); void v.offsetWidth; v.classList.add("vin"); } // page-change animation (only on a tab click, not on background refreshes)
 function toggleSb() {
   const a = $("#app");
-  if (innerWidth <= 820) { a.classList.toggle("mob"); return; }
-  if (a.classList.contains("hidden-sb")) { a.classList.remove("hidden-sb"); localStorage.removeItem("sbh"); return; } // bring a hidden sidebar back
-  a.classList.toggle("collapsed"); localStorage.setItem("sbc", a.classList.contains("collapsed") ? 1 : "");
-}
-function hideSb() { // the button inside the sidebar: hide it completely (the menu button in the top bar shows it again)
-  const a = $("#app");
-  if (innerWidth <= 820) { a.classList.remove("mob"); return; }
-  a.classList.add("hidden-sb"); localStorage.setItem("sbh", "1");
+  if (innerWidth <= 820) a.classList.toggle("mob");
+  else { a.classList.toggle("collapsed"); localStorage.setItem("sbc", a.classList.contains("collapsed") ? 1 : ""); }
 }
 function closePops() { document.querySelectorAll(".pop").forEach((p) => p.classList.remove("on")); }
 function togglePop(e, id) { e.stopPropagation(); const p = $("#" + id), was = p.classList.contains("on"); closePops(); p.classList.toggle("on", !was); }
@@ -483,7 +478,7 @@ function vDash() {
    <input class="in grow" id="dq" placeholder="Search class, batch, time, day or student" value="${esc(DF.q)}">
    <select class="in" id="dc"><option value="">All classes</option>${used.map((c) => `<option value="${esc(c)}" ${DF.cls === c ? "selected" : ""}>${esc(clsLabel(c))}</option>`).join("")}</select>
    <select class="in" id="ds"><option value="">All sections</option>${SECTIONS.map((s) => `<option ${DF.sec === s ? "selected" : ""}>${s}</option>`).join("")}</select>
-   <select class="in" id="dd"><option value="">All days</option>${DAYS.map(([c, , n]) => `<option value="${c}" ${DF.day === c ? "selected" : ""}>${n}</option>`).join("")}</select>
+   <select class="in" id="dd"><option value="">All days</option>${weekDays().map(([c, , n]) => `<option value="${c}" ${DF.day === c ? "selected" : ""}>${n}</option>`).join("")}</select>
    <button class="btn" onclick="resetDash()">Clear</button>
   </div>
   <div class="sec">Classes and batch times <span id="dcnt"></span></div>
@@ -541,7 +536,7 @@ function openBatch(el) {
 }
 
 /* ============ CLASS / BATCH MODAL (add + edit) ============ */
-const pickedDays = () => [...document.querySelectorAll("#b_days input:checked")].map((i) => i.value);
+const pickedDays = () => { const p = new Set([...document.querySelectorAll("#b_days input:checked")].map((i) => i.value)); return DAYS.filter((d) => p.has(d[0])).map((d) => d[0]); };
 function editBatch(id) {
   const e = DB.Batches.find((b) => b.id === id), cur = new Set(e ? dayCodes(e) : []);
   $("#modal").innerHTML = `<h2>${e ? "Edit class / batch" : "Add class / batch"}</h2>
@@ -550,7 +545,7 @@ function editBatch(id) {
    <label>Section<select class="in" id="b_section">${SECTIONS.map((s) => `<option ${e && e.section === s ? "selected" : ""}>${s}</option>`).join("")}</select></label>
    <label class="full">Batch starts<input class="in" id="b_start" type="time" value="${e ? esc(e.start) : ""}"></label>
    <div class="full"><div class="lbl">Batch days (choose one or more)</div>
-    <div class="days" id="b_days">${DAYS.map(([c, , n]) => `<label class="chk"><input type="checkbox" value="${c}" ${cur.has(c) ? "checked" : ""}><span>${n}</span></label>`).join("")}</div></div>
+    <div class="days" id="b_days">${weekDays().map(([c, , n]) => `<label class="chk"><input type="checkbox" value="${c}" ${cur.has(c) ? "checked" : ""}><span>${n}</span></label>`).join("")}</div></div>
    <label class="full">Batch name (automatic)<input class="in" id="b_name" readonly placeholder="Choose a start time and days"></label>
    <label class="full">WhatsApp group invite link (optional)<input class="in" id="b_link" placeholder="https://chat.whatsapp.com/…" value="${e ? esc(e.groupLink || "") : ""}"></label>
   </div>
@@ -1200,8 +1195,7 @@ async function atExport() {
 }
 
 /* ============ TUITION FEES ============ */
-const CUR = "৳";
-const money = (n) => CUR + Math.round(Number(n) || 0).toLocaleString("en-US");
+const money = (n) => (SET.currency || "৳") + Math.round(Number(n) || 0).toLocaleString("en-US");
 const curMonth = () => dKey(new Date()).slice(0, 7);
 const monthLabel = (m) => { const [y, mo] = m.split("-").map(Number); return new Date(y, mo - 1, 1).toLocaleDateString(undefined, { month: "short", year: "numeric" }); };
 const monthsBetween = (a, b) => { const out = []; for (let m = a, i = 0; m <= b && i < 600; m = shiftMonth(m, 1), i++) out.push(m); return out; };
@@ -1247,7 +1241,7 @@ function feeAll(everyone) {
 }
 function feeBadge() { // notification tag on the Tuition fees menu item
   const n = DB.Students.length ? payPending() : 0, el = document.querySelector('.nav a[data-r="fees"] .nb');
-  if (el) { el.textContent = n; el.hidden = !n; el.title = n + " student" + (n === 1 ? "" : "s") + " with pending payments"; }
+  if (el) { el.textContent = n; el.hidden = !n || !SET.nFees; el.title = n + " student" + (n === 1 ? "" : "s") + " with pending payments"; }
 }
 function openFeesDue() { Object.assign(FS, { q: "", batch: "", plan: "", st: "due", stu: "Active" }); go("fees"); }
 async function saveFeeRows(rows, msg) {
@@ -1337,7 +1331,7 @@ function collectFee(id, month) {
   <div class="fsum"><div><small>${I.type === "Course" ? "Course fee" : "Due so far"}</small><b>${money(I.due)}</b></div><div><small>Paid</small><b class="g">${money(I.paid)}</b></div><div><small>Pending</small><b class="${I.pending ? "r" : "g"}">${money(I.pending)}</b></div><div><small>${I.type === "Course" ? "Progress" : "Clear till"}</small><b>${I.type === "Course" ? I.pct + "%" : I.clear ? monthLabel(I.clear) : "None"}</b></div></div>
   ${dues.length ? `<div class="pills" style="margin-bottom:12px">${dues.slice(0, 8).map((r) => `<span class="chip ${r.paid ? "s-Partial" : "s-Pending"}">${monthLabel(r.m)} ${money(r.pend)}</span>`).join("")}${dues.length > 8 ? `<span class="mut">+${dues.length - 8} more</span>` : ""}</div>` : ""}
   <div class="f">
-   <label>Amount (${CUR})<input class="in" id="c_amt" type="number" min="1" value="${def}"></label>
+   <label>Amount (${SET.currency})<input class="in" id="c_amt" type="number" min="1" value="${def}"></label>
    <label>Payment date<input class="in" id="c_date" type="date" value="${dKey(new Date())}"></label>
    ${I.type === "Monthly" ? `<label class="full">Apply to<select class="in" id="c_to"><option value="">Oldest dues first${dues.length ? "" : " (advance payment)"}</option>${dues.map((r) => `<option value="${r.m}" ${month === r.m ? "selected" : ""}>${monthLabel(r.m)} - pending ${money(r.pend)}</option>`).join("")}</select></label>` : ""}
    <label>Method<select class="in" id="c_method">${METHODS.map((m) => `<option>${m}</option>`).join("")}</select></label>
@@ -1373,8 +1367,8 @@ function feeHistory(id) {
   <div class="fsum"><div><small>Fee</small><b>${money(I.fee)}</b></div><div><small>Paid</small><b class="g">${money(I.paid)}</b></div><div><small>Pending</small><b class="${I.pending ? "r" : "g"}">${money(I.pending)}</b></div><div><small>${I.type === "Course" ? "Progress" : "Clear till"}</small><b>${I.type === "Course" ? I.pct + "%" : I.clear ? monthLabel(I.clear) : "None"}</b></div></div>
   <div class="tw" style="max-height:46vh;padding:0"><table style="min-width:520px"><thead><tr><th>Date</th><th>For</th><th>Amount</th><th>Method</th><th>Receipt</th><th></th></tr></thead><tbody>${
     L.map((f) => f.kind === "skip"
-      ? `<tr><td>${esc(f.date)}</td><td>${monthLabel(f.month)} <span class="chip s-Inactive">skipped</span></td><td>-</td><td colspan="2" class="mut">${esc(f.note)}</td><td style="text-align:right"><span class="ra">${icoBtn("del", "Remove skip", `delFee('${f.id}','${id}')`, "trash")}</span></td></tr>`
-      : `<tr><td>${esc(f.date)}</td><td>${f.kind === "course" ? "Course fee" : monthLabel(f.month)}</td><td class="g">${money(f.amount)}</td><td>${esc(f.method)}</td><td>${esc(f.rcpt)}</td><td style="text-align:right"><span class="ra">${f.rcpt ? icoBtn("", "Print receipt", `printReceipt('${esc(f.rcpt)}')`, "print") : ""}${icoBtn("del", "Delete this payment", `delFee('${f.id}','${id}')`, "trash")}</span></td></tr>`).join("") ||
+      ? `<tr><td>${fmtD(f.date)}</td><td>${monthLabel(f.month)} <span class="chip s-Inactive">skipped</span></td><td>-</td><td colspan="2" class="mut">${esc(f.note)}</td><td style="text-align:right"><span class="ra">${icoBtn("del", "Remove skip", `delFee('${f.id}','${id}')`, "trash")}</span></td></tr>`
+      : `<tr><td>${fmtD(f.date)}</td><td>${f.kind === "course" ? "Course fee" : monthLabel(f.month)}</td><td class="g">${money(f.amount)}</td><td>${esc(f.method)}</td><td>${esc(f.rcpt)}</td><td style="text-align:right"><span class="ra">${f.rcpt ? icoBtn("", "Print receipt", `printReceipt('${esc(f.rcpt)}')`, "print") : ""}${icoBtn("del", "Delete this payment", `delFee('${f.id}','${id}')`, "trash")}</span></td></tr>`).join("") ||
     `<tr><td colspan="6"><div class="empty">No payments yet.</div></td></tr>`}</tbody></table></div>
   <div class="acts"><button class="btn" onclick="closeM()">Close</button><button class="btn p" onclick="collectFee('${id}')">Collect fee</button></div>`;
   $("#modal").classList.add("wide"); $("#ov").classList.add("on");
@@ -1544,7 +1538,7 @@ $("#imgFile").onchange = (e) => {
 };
 
 /* ============ MASTER ADMIN PANEL ============ */
-const when = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "");
+const when = (iso) => (iso ? dShow(new Date(iso)) : "");
 const ADM = { q: "", st: "", open: "" };
 function vAdmin() {
   if (!API_URL) { $("#view").innerHTML = `<div class="glass pad empty">The admin panel works once the app is connected to Apps Script (set API_URL in config.js).</div>`; return; }
@@ -1604,11 +1598,30 @@ function resetU(id) { const pw = prompt(`New password for @${id} (6+ characters)
 function removeU(id) { if (confirm(`Remove @${id}? They can no longer sign in. Their Drive folder and data are kept.`)) adminDo("removeUser", { id }, "User removed"); }
 
 /* ============ SETTINGS ============ */
-const SET_DEF = { dateFmt: "dmy", currency: "৳", weekStart: "sat", compact: false, nomotion: false, nSignup: true, nFees: true, nSound: false };
+const SET_DEF = { dateFmt: "auto", currency: "৳", weekStart: "sat", compact: false, nomotion: false, nSignup: true, nFees: true, nSound: false };
 const SET = Object.assign({}, SET_DEF, (() => { try { return JSON.parse(localStorage.getItem("tp_settings") || "{}"); } catch (e) { return {}; } })());
+let SETD = null; // unsaved edits made on the Settings page
+const sdirty = () => !!SETD && JSON.stringify(SETD) !== JSON.stringify(SET);
 function applySettings() { document.body.classList.toggle("compact", !!SET.compact); document.body.classList.toggle("nomotion", !!SET.nomotion); }
-function setSet(k, v) { SET[k] = v; localStorage.setItem("tp_settings", JSON.stringify(SET)); applySettings(); }
 applySettings();
+function dShow(d) { // every date in the portal goes through here
+  if (isNaN(d)) return "";
+  const dd = String(d.getDate()).padStart(2, "0"), mm = String(d.getMonth() + 1).padStart(2, "0"), y = d.getFullYear();
+  return SET.dateFmt === "dmy" ? `${dd}/${mm}/${y}` : SET.dateFmt === "mdy" ? `${mm}/${dd}/${y}` : SET.dateFmt === "ymd" ? `${y}-${mm}-${dd}` : d.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+}
+function weekDays() { // DAYS rotated so the chosen week-start day comes first
+  const i = Math.max(0, DAYS.findIndex((d) => d[0] === String(SET.weekStart || "sat").toUpperCase()));
+  return [...DAYS.slice(i), ...DAYS.slice(0, i)];
+}
+function beep() {
+  if (!SET.nSound) return;
+  try {
+    const a = new (window.AudioContext || window.webkitAudioContext)(), o = a.createOscillator(), g = a.createGain();
+    o.connect(g); g.connect(a.destination); o.frequency.value = 880;
+    g.gain.setValueAtTime(0.08, a.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + 0.25);
+    o.start(); o.stop(a.currentTime + 0.25);
+  } catch (e) {}
+}
 function exportAll() {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([JSON.stringify({ exported: new Date().toISOString(), data: DB }, null, 2)], { type: "application/json" }));
@@ -1616,35 +1629,51 @@ function exportAll() {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 function clearCache() { localStorage.removeItem("tp_cache"); toast("Cached data cleared"); }
+function sd(k, v) { SETD[k] = v; setBar(); }
+function setBar() {
+  const d = sdirty(), st = $("#set_state"); if (!st) return;
+  st.textContent = d ? "You have unsaved changes" : "All changes saved";
+  $("#set_save").disabled = !d; $("#set_disc").disabled = !d;
+}
+function saveSettings() { // commit the draft, then re-draw the whole portal with the new settings
+  Object.assign(SET, SETD); localStorage.setItem("tp_settings", JSON.stringify(SET));
+  SETD = null; applySettings(); buildNav(); applyMe(); setBell(); render(); toast("Settings saved");
+}
+function discardSettings() { SETD = null; vSettings(); }
 function vSettings() {
+  SETD = SETD || { ...SET };
   const row = (t, d, c) => `<div class="srow"><div class="st"><b>${t}</b><small class="mut">${d}</small></div><div class="sc">${c}</div></div>`;
-  const tg = (k) => `<label class="tg"><input type="checkbox" ${SET[k] ? "checked" : ""} onchange="setSet('${k}', this.checked)"><i></i></label>`;
-  const sel = (k, o) => `<select class="in" onchange="setSet('${k}', this.value)">${o.map(([v, l]) => `<option value="${esc(v)}" ${SET[k] === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
+  const tg = (k) => `<label class="tg"><input type="checkbox" ${SETD[k] ? "checked" : ""} onchange="sd('${k}', this.checked)"><i></i></label>`;
+  const sel = (k, o) => `<select class="in" onchange="sd('${k}', this.value)">${o.map(([v, l]) => `<option value="${esc(v)}" ${SETD[k] === v ? "selected" : ""}>${l}</option>`).join("")}</select>`;
   const btn = (l, f, p) => `<button class="btn ${p || ""}" onclick="${f}">${l}</button>`;
   const card = (h, r) => `<div class="glass pad scard"><h3>${h}</h3>${r.join("")}</div>`;
-  $("#view").innerHTML = `<div class="sgrid">${[
+  $("#view").innerHTML = `<div class="swrap"><div class="sgrid">${[
     card("General", [
       row("Institute profile", "Name, logo, address and letterhead", btn("Edit profile", "go('profile')")),
-      row("Date format", "How dates are shown", sel("dateFmt", [["dmy", "DD/MM/YYYY"], ["mdy", "MM/DD/YYYY"], ["ymd", "YYYY-MM-DD"]])),
-      row("Currency symbol", "Shown next to fees", sel("currency", [["৳", "৳ Taka"], ["$", "$ Dollar"], ["₹", "₹ Rupee"], ["£", "£ Pound"]])),
-      row("Week starts on", "For attendance calendars", sel("weekStart", [["sat", "Saturday"], ["sun", "Sunday"], ["mon", "Monday"]]))]),
+      row("Date format", "How dates are shown everywhere", sel("dateFmt", [["auto", "Auto (23 Nov 2026)"], ["dmy", "DD/MM/YYYY"], ["mdy", "MM/DD/YYYY"], ["ymd", "YYYY-MM-DD"]])),
+      row("Currency symbol", "Shown next to fees, reports and receipts", sel("currency", [["৳", "৳ Taka"], ["$", "$ Dollar"], ["₹", "₹ Rupee"], ["£", "£ Pound"]])),
+      row("Week starts on", "Order of the days when picking batch days", sel("weekStart", [["sat", "Saturday"], ["sun", "Sunday"], ["mon", "Monday"]]))]),
     card("Appearance", [
-      row("Theme", "Choose from " + THEME_LIST.length + " colour themes", `<button class="btn" onclick="togglePop(event,'pop')">Choose theme</button>`),
+      row("Theme", "Choose from " + THEME_LIST.length + " colour themes (applies at once)", `<button class="btn" onclick="togglePop(event,'pop')">Choose theme</button>`),
       row("Compact tables", "Tighter rows to fit more on screen", tg("compact")),
       row("Reduce motion", "Turn off animations and transitions", tg("nomotion"))]),
     card("Notifications", [
       row("Sign-up requests", "Alert when a new request arrives (Master Admin)", tg("nSignup")),
-      row("Fee reminders", "Remind me about unpaid tuition fees", tg("nFees")),
-      row("Sound", "Play a sound with alerts", tg("nSound"))]),
+      row("Fee reminders", "Show the unpaid-fee count on the Tuition fees tab", tg("nFees")),
+      row("Sound", "Play a beep with sign-up alerts", tg("nSound"))]),
     card("Data & backup", [
       row("Sync now", "Refresh everything from the server", btn("Sync", "load(false)")),
-      row("Export all data", "Download students, fees, attendance and results as a JSON file", btn("Export", "exportAll()")),
-      row("Clear cached data", "Removes the copy stored on this device. It reloads on next start", btn("Clear", "clearCache()"))]),
-    card("Account", [
-      row("Signed in as", `@${esc(ME.id)} · ${ME.role === "master" ? "Master Admin" : "User"}`, btn("Sign out", "logout()", "d"))]),
-    card("About", [
-      row("TuitionPro", "Build " + NEED_BUILD, `<small class="mut">© Taufiq Pias (WolfSoft)</small>`)]),
-  ].join("")}</div>`;
+      row("Export all data", "Download students, fees, attendance and results as JSON", btn("Export", "exportAll()")),
+      row("Clear cached data", "Removes the copy stored on this device", btn("Clear", "clearCache()"))]),
+  ].join("")}</div>
+  <div class="sfoot">
+   <div class="sbot">
+    <div class="glass sbc"><div class="st"><b>Signed in as</b><small class="mut">@${esc(ME.id)} · ${ME.role === "master" ? "Master Admin" : "User"}</small></div>${btn("Sign out", "logout()", "d")}</div>
+    <div class="glass sbc"><div class="st"><b>TuitionPro</b><small class="mut">Build ${NEED_BUILD} · © Taufiq Pias (WolfSoft)</small></div></div>
+   </div>
+   <div class="glass sbar"><span class="mut" id="set_state"></span><button class="btn" id="set_disc" onclick="discardSettings()">Discard</button><button class="btn p" id="set_save" onclick="saveSettings()">Save settings</button></div>
+  </div></div>`;
+  setBar();
 }
 
 function vSoon() {
@@ -1683,7 +1712,7 @@ const gradeOf = (pct) => { const g = GRADES.find((x) => pct >= x[0]) || GRADES[6
 const gcls = (g) => "gr-" + String(g).replace("+", "p").replace("-", "m");
 const nf = (n) => String(+Number(n).toFixed(2));
 const g2 = (n) => Number(n).toFixed(2);
-const fmtD = (s) => (/^\d{4}-\d{2}-\d{2}$/.test(s || "") ? dateObj(s).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : esc(s || ""));
+const fmtD = (s) => (/^\d{4}-\d{2}-\d{2}$/.test(s || "") ? dShow(dateObj(s)) : esc(s || ""));
 const examParts = (e) => PARTS.filter(([, , f]) => Number(e[f]) > 0).map(([k, l, f]) => ({ k, l, full: Number(e[f]) }));
 const examFull = (e) => sum(examParts(e), (p) => p.full);
 const partsTxt = (e) => examParts(e).map((p) => `${p.l} ${nf(p.full)}`).join(" + ");
@@ -2104,7 +2133,6 @@ $("#sw").innerHTML = [["Light themes", false], ["Dark themes", true]]
   .join("");
 setTheme(localStorage.getItem("theme") || "ocean");
 if (localStorage.getItem("sbc")) $("#app").classList.add("collapsed");
-if (localStorage.getItem("sbh")) $("#app").classList.add("hidden-sb");
 route = (location.hash || "#dash").slice(1);
 if (!VIEWS[route]) route = "dash";
 buildNav();
