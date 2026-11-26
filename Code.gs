@@ -31,7 +31,7 @@ const DATA = {
 const USERS = ['id','salt','hash','role','status','name','email','phone','address','speciality','trainers','services','logo','photo','lh1','lh2','lh3','lh4','token','exp','created','folderId','sheetId','note'];
 const PROFILE = ['name','email','phone','address','speciality','trainers','services','logo','photo','lh1','lh2','lh3','lh4'];
 const DAY = 864e5;
-const BUILD = '10'; // the app compares this to know whether you deployed the latest Code.gs
+const BUILD = '11'; // the app compares this to know whether you deployed the latest Code.gs
 
 /* ---------- small helpers ---------- */
 const P_ = () => PropertiesService.getScriptProperties();
@@ -172,7 +172,7 @@ function allPayload_(users, U, u) { // everything the app needs on start-up
   if (u.role === 'master') res.admin = { users: U.filter(r => r.role !== 'master').map(brief_) };
   return res;
 }
-function check_(U, q, needEmail) {
+function check_(U, q, needEmail, needPhone) {
   const id = String(q.id || '').trim().toLowerCase();
   if (!/^(?=.*[a-z])[a-z0-9_.-]{3,30}$/.test(id)) return { e: 'ID needs 3–30 characters (letters, numbers, . _ -) with at least one letter' };
   if (String(q.pw || '').length < 6) return { e: 'Password needs at least 6 characters' };
@@ -180,9 +180,11 @@ function check_(U, q, needEmail) {
   if (!name) return { e: 'Enter the institute or trainer name' };
   const email = String(q.email || '').trim();
   if ((needEmail || email) && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return { e: 'Enter a valid email address' };
+  const phone = String(q.phone || '').trim().slice(0, 30), pd = phone.replace(/\D/g, '');
+  if ((needPhone || phone) && (pd.length < 7 || pd.length > 15)) return { e: 'Enter a valid phone number' };
   if (U.some(r => String(r.id) === id)) return { e: 'That ID is already taken' };
   const salt = Utilities.getUuid();
-  return { u: { id, salt, hash: hash_(salt, q.pw), name, email, created: new Date().toISOString() } };
+  return { u: { id, salt, hash: hash_(salt, q.pw), name, email, phone, created: new Date().toISOString() } };
 }
 function mail_(to, subject, body) {
   if (!to) return false;
@@ -221,13 +223,13 @@ function doPost(e) {
 
     if (a === 'signup') {
       if (U.filter(r => r.status === 'pending').length >= 50) return err_('Too many pending requests. Please try again later.');
-      const c = check_(U, q, true);
+      const c = check_(U, q, true, true);
       if (c.e) return err_(c.e);
       c.u.role = 'user'; c.u.status = 'pending';
       put_(users, c.u);
       P_().setProperty('VADMIN', String(Date.now()));
       mail_(masterEmail_(U), 'New TuitionPro sign-up request: ' + c.u.name,
-        '<p><b>' + h_(c.u.name) + '</b> (@' + h_(c.u.id) + ') asked for an account.</p><p>Email: ' + h_(c.u.email) + '</p><p>Open the Admin panel to approve or reject this request.</p>');
+        '<p><b>' + h_(c.u.name) + '</b> (@' + h_(c.u.id) + ') asked for an account.</p><p>Email: ' + h_(c.u.email) + '<br>Phone: ' + h_(c.u.phone) + '</p><p>Open the Admin panel to approve or reject this request.</p>');
       return out_({ ok: true, pending: true });
     }
 
@@ -332,7 +334,7 @@ function doPost(e) {
         return out_({ ok: true, emailed, ver: curVer_(u) });
       }
       case 'createUser': {
-        const c = check_(U, q, false);
+        const c = check_(U, q, false, false);
         if (c.e) return err_(c.e);
         c.u.role = 'user'; c.u.status = 'active';
         put_(users, c.u);

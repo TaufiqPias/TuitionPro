@@ -1,7 +1,7 @@
 /* ============ CONFIG ============
    The Apps Script URL lives in config.js (so you never have to edit this file). */
 const API_URL = (window.TP_CONFIG && window.TP_CONFIG.API_URL) || "";
-const NEED_BUILD = "10"; // must match BUILD in Code.gs
+const NEED_BUILD = "11"; // must match BUILD in Code.gs
 const POLL_MS = 10000;
 const CLASSES = [
   "1",
@@ -279,18 +279,26 @@ function setMode(m) {
   const up = m === "up";
   $("#lh").textContent = up ? "Request an account" : "Sign in";
   $("#lsub").textContent = up ? "The Master Admin will review your request. You will get an email once it is approved." : "Use your TuitionPro ID to continue.";
-  ["lnamew", "lemailw"].forEach((i) => ($("#" + i).hidden = !up));
-  $("#lname").required = $("#lemail").required = up;
+  ["lnamew", "lemailw", "lphonew"].forEach((i) => ($("#" + i).hidden = !up));
+  $("#lremw").hidden = up;
+  $("#lname").required = $("#lemail").required = $("#lphone").required = up; // email + phone are compulsory for sign-up
   $("#lbtn").textContent = up ? "Send sign-up request" : "Sign in";
   $("#lpw").autocomplete = up ? "new-password" : "current-password";
   $("#lerr").textContent = ""; $("#lok").textContent = "";
   $("#ltab_in").classList.toggle("on", !up); $("#ltab_up").classList.toggle("on", up);
 }
+/* Remember me: keeps only the last ID on this device. The password is never stored by the app
+   (your browser's own password manager can fill it in). */
+function rememberLoad() {
+  const id = localStorage.getItem("tp_remember_id");
+  $("#lrem").checked = !!id;
+  if (id) { $("#lid").value = id; setTimeout(() => $("#lpw").focus(), 0); }
+}
 function showLogin() {
   TOKEN = ""; localStorage.removeItem("tok"); localStorage.removeItem("tp_cache");
   showLoader(false);
   document.body.classList.add("locked"); $("#login").hidden = false;
-  document.title = "TuitionPro"; setMode("in");
+  document.title = "TuitionPro"; setMode("in"); rememberLoad();
 }
 $("#lf").onsubmit = async (e) => {
   e.preventDefault();
@@ -298,11 +306,15 @@ $("#lf").onsubmit = async (e) => {
   showLoader(true, mode === "up" ? "Sending your request…" : "Signing in…");
   try {
     if (mode === "up") {
-      await api("signup", { id: $("#lid").value, pw: $("#lpw").value, name: $("#lname").value, email: $("#lemail").value });
+      const email = $("#lemail").value.trim(), phone = $("#lphone").value.trim(), digits = phone.replace(/\D/g, "");
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error("Enter a valid email address");
+      if (digits.length < 7 || digits.length > 15) throw new Error("Enter a valid phone number");
+      await api("signup", { id: $("#lid").value, pw: $("#lpw").value, name: $("#lname").value, email, phone });
       $("#lok").textContent = "Request sent. We will email you as soon as the Master Admin approves it.";
       $("#lf").reset();
     } else {
       const j = await api("login", { id: $("#lid").value, pw: $("#lpw").value });
+      if ($("#lrem").checked) localStorage.setItem("tp_remember_id", $("#lid").value.trim()); else localStorage.removeItem("tp_remember_id");
       TOKEN = j.token; localStorage.setItem("tok", TOKEN); $("#lpw").value = "";
       if (j.data) { applyData(j); cacheSave(); status("", "Synced"); } else await load(false); // login already returns the data
     }
@@ -1501,32 +1513,59 @@ $("#imgFile").onchange = (e) => {
 
 /* ============ MASTER ADMIN PANEL ============ */
 const when = (iso) => (iso ? new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "");
+const ADM = { q: "", st: "", open: "" };
 function vAdmin() {
   if (!API_URL) { $("#view").innerHTML = `<div class="glass pad empty">The admin panel works once the app is connected to Apps Script (set API_URL in config.js).</div>`; return; }
   const U = ADMIN.users, Pn = U.filter((x) => x.status === "pending"), O = U.filter((x) => x.status !== "pending");
-  $("#view").innerHTML = `<div class="prof">
-  <div class="glass pad" style="grid-column:1/-1"><h3>Sign-up requests (${Pn.length})</h3><div class="rows">${
-    Pn.map((x) => `<div class="acc glass"><div class="av">${init(x.name)}</div>
-     <div style="flex:1;min-width:0"><b>${esc(x.name)}</b> <small class="mut">@${esc(x.id)}</small><br><small class="mut">${esc(x.email)} · requested ${when(x.created)}</small></div>
-     <button class="btn p" onclick="approveU('${esc(x.id)}')">Approve</button><button class="btn d" onclick="rejectU('${esc(x.id)}')">Reject</button></div>`).join("") ||
-    '<div class="empty">No pending requests.</div>'}</div></div>
-  <div class="glass pad" style="align-self:start"><h3>Create a user</h3><div class="f">
-   <label class="full">Institute or trainer name<input class="in" id="a_name"></label>
-   <label>Login ID<input class="in" id="a_id" autocapitalize="none"></label>
-   <label>Password<input class="in" id="a_pw" type="text" autocomplete="off"></label>
-   <label class="full">Email (optional, sends a notice)<input class="in" id="a_email" type="email"></label></div>
-   <p class="mut" style="font-size:12px;margin-top:8px">A fresh, empty workspace is created in its own Drive folder.</p>
-   <div class="acts"><button class="btn p" onclick="createU()">Create user</button></div></div>
-  <div class="glass pad"><h3>All users (${O.length})</h3><div class="rows">${
-    O.map((x) => `<div class="acc glass"><div class="av">${init(x.name)}</div>
-     <div style="flex:1;min-width:0"><b>${esc(x.name)}</b><br><small class="mut">@${esc(x.id)}</small></div><span class="chip s-${esc(x.status)}">${esc(x.status)}</span>
-     <span class="ra">${icoBtn("", "Reset password", `resetU('${esc(x.id)}')`, "key")}${icoBtn("del", "Remove user", `removeU('${esc(x.id)}')`, "trash")}</span></div>`).join("") ||
-    '<div class="empty">No users yet.</div>'}</div></div></div>`;
+  $("#view").innerHTML = `<div class="adm">
+  <div class="glass adm-bar">
+   <div class="adm-in">
+    <label>Institute or trainer name<input class="in" id="a_name" autocomplete="off"></label>
+    <label>Login ID<input class="in" id="a_id" autocapitalize="none" autocomplete="off"></label>
+    <label>Password<input class="in" id="a_pw" type="text" autocomplete="off"></label>
+    <label>Email<input class="in" id="a_email" type="email" autocomplete="off"></label>
+    <label>Phone<input class="in" id="a_phone" type="tel" autocomplete="off"></label>
+   </div>
+   <button class="btn p adm-go" onclick="createU()"><b>+</b> Create user</button>
+  </div>
+  <div class="adm-cols">
+   <div class="glass adm-users">
+    <div class="adm-h"><h3>All users <span class="mut">(${O.length})</span></h3>
+     <div class="adm-f"><input class="in" id="adm_q" type="search" placeholder="Search users" value="${esc(ADM.q)}" autocomplete="off">
+      <select class="in" id="adm_st"><option value="">All</option>${["active", "rejected"].map((x) => `<option value="${x}" ${ADM.st === x ? "selected" : ""}>${x[0].toUpperCase() + x.slice(1)}</option>`).join("")}</select></div></div>
+    <div class="tw adm-tw"><table class="adm-t"><thead><tr><th>Name / Institute</th><th>Login ID</th><th>Status</th><th>Signed up</th><th>Phone</th><th>Email</th><th></th></tr></thead><tbody id="adm_rows"></tbody></table></div>
+   </div>
+   <div class="glass adm-req">
+    <div class="adm-h"><h3>Sign-up requests <span class="mut">(${Pn.length})</span></h3></div>
+    <div class="adm-rl">${Pn.map((x) => {
+      const on = ADM.open === x.id;
+      return `<div class="adm-r ${on ? "open" : ""}"><div class="adm-rh"><div class="av">${init(x.name)}</div>
+       <div class="adm-rn"><b>${esc(x.name)}</b><small class="mut">@${esc(x.id)} · ${when(x.created)}</small></div>
+       <button class="btn" onclick="reviewU('${esc(x.id)}')">${on ? "Hide" : "Review"}</button></div>
+       ${on ? `<div class="adm-rd"><dl><dt>Name / Institute</dt><dd>${esc(x.name)}</dd><dt>Login ID</dt><dd>${esc(x.id)}</dd><dt>Email</dt><dd>${esc(x.email) || "–"}</dd><dt>Phone</dt><dd>${esc(x.phone) || "–"}</dd><dt>Requested</dt><dd>${when(x.created) || "–"}</dd></dl>
+        <div class="acts"><button class="btn d" onclick="rejectU('${esc(x.id)}')">Reject</button><button class="btn p" onclick="approveU('${esc(x.id)}')">Approve</button></div></div>` : ""}</div>`;
+    }).join("") || '<div class="empty">No pending requests.</div>'}</div>
+   </div>
+  </div></div>`;
+  $("#adm_q").oninput = (e) => { ADM.q = e.target.value; admRows(); };
+  $("#adm_st").onchange = (e) => { ADM.st = e.target.value; admRows(); };
+  admRows();
 }
+function admRows() {
+  const el = $("#adm_rows"); if (!el) return;
+  const q = ADM.q.trim().toLowerCase();
+  const L = ADMIN.users.filter((x) => x.status !== "pending" && (!ADM.st || x.status === ADM.st) &&
+    (!q || [x.name, x.id, x.email, x.phone].some((v) => String(v || "").toLowerCase().includes(q))));
+  el.innerHTML = L.map((x) => `<tr><td><b>${esc(x.name)}</b></td><td>@${esc(x.id)}</td><td><span class="chip s-${esc(x.status)}">${esc(x.status)}</span></td>
+   <td>${when(x.created) || "–"}</td><td>${esc(x.phone) || "–"}</td><td>${esc(x.email) || "–"}</td>
+   <td style="text-align:right"><span class="ra">${icoBtn("", "Reset password", `resetU('${esc(x.id)}')`, "key")}${icoBtn("del", "Remove user", `removeU('${esc(x.id)}')`, "trash")}</span></td></tr>`).join("")
+    || `<tr><td colspan="7"><div class="empty">${ADMIN.users.some((x) => x.status !== "pending") ? "No users match." : "No users yet."}</div></td></tr>`;
+}
+function reviewU(id) { ADM.open = ADM.open === id ? "" : id; vAdmin(); }
 const approveU = (id) => adminDo("approve", { id }, "Approved and workspace created");
 function rejectU(id) { const r = prompt("Reason for rejecting (optional, included in the email)"); if (r !== null) adminDo("reject", { id, reason: r }, "Request rejected"); }
 async function createU() {
-  const ok = await adminDo("createUser", { id: $("#a_id").value, name: $("#a_name").value, pw: $("#a_pw").value, email: $("#a_email").value }, "User created");
+  const ok = await adminDo("createUser", { id: $("#a_id").value, name: $("#a_name").value, pw: $("#a_pw").value, email: $("#a_email").value, phone: $("#a_phone").value }, "User created");
   if (ok) vAdmin();
 }
 function resetU(id) { const pw = prompt(`New password for @${id} (6+ characters)`); if (pw) adminDo("resetPassword", { id, pw }, "Password reset"); }
@@ -1978,7 +2017,7 @@ fetch("watermark.svg")
   .then((t) => {
     if (!t) return;
     t = t.replace(/<\?xml[\s\S]*?\?>/, "").replace(/<style>[\s\S]*?<\/style>/, "").replace(/<title>[\s\S]*?<\/title>/, "").replace(/\sid="[^"]*"/g, "");
-    document.querySelectorAll(".wm").forEach((w) => (w.innerHTML = t));
+    document.querySelectorAll(".wm, .logo.big").forEach((w) => (w.innerHTML = t)); // the same artwork is the big login logo
   })
   .catch(() => {});
 

@@ -27,7 +27,7 @@
     <div class="login" id="login" hidden>
       <div class="wm" aria-hidden="true"></div>
       <form class="lcard glass" id="lf" autocomplete="on">
-        <div class="logo big">T</div>
+        <div class="logo big" id="lLogo">T</div>
         <h2 id="lh">Sign in</h2>
         <p class="mut" id="lsub">Use your TuitionPro ID to continue.</p>
         <div class="ltabs">
@@ -36,8 +36,10 @@
         </div>
         <label id="lnamew" hidden>Institute or trainer name<input class="in" id="lname" autocomplete="organization" /></label>
         <label id="lemailw" hidden>Email<input class="in" id="lemail" type="email" autocomplete="email" /></label>
+        <label id="lphonew" hidden>Phone number<input class="in" id="lphone" type="tel" inputmode="tel" autocomplete="tel" placeholder="e.g. 01712345678" /></label>
         <label>ID<input class="in" id="lid" autocomplete="username" autocapitalize="none" required /></label>
         <label>Password<input class="in" id="lpw" type="password" autocomplete="current-password" required /></label>
+        <label class="lrem" id="lremw"><input type="checkbox" id="lrem" /> Remember me</label>
         <div class="lerr" id="lerr"></div>
         <div class="lok" id="lok"></div>
         <button class="btn p wide" id="lbtn" type="submit">Sign in</button>
