@@ -20,6 +20,19 @@ const MASTER_INITIAL_PASSWORD = '13110491';   // used ONCE to create the master 
 const APP_URL = 'https://taufiqpias.github.io/TuitionPro'; // link used in emails
 const ROOT_NAME = 'TuitionPro';               // top-level Drive folder
 
+/* ---------- WAHA WhatsApp HTTP API ----------
+   Run setWaha() ONCE from the Apps Script editor (Run button) to save these values:
+     WAHA_URL  -> the public HTTPS URL of your WAHA instance (from Cloudflare Tunnel)
+     WAHA_KEY  -> the value of WAHA_API_KEY env var on the WAHA container
+   The session name is hard-coded below — change it if you named your session differently. */
+const WAHA_SESSION = 'TuitionPro';            // must match WHATSAPP_DEFAULT_SESSION on the WAHA container
+const WAHA_URL = () => P_().getProperty('WAHA_URL') || '';
+const WAHA_KEY = () => P_().getProperty('WAHA_KEY') || '';
+function setWaha() {
+  P_().setProperty('WAHA_URL', 'https://sustainable-perth-gis-episode.trycloudflare.com'); // ← your tunnel URL
+  P_().setProperty('WAHA_KEY', 'tp-waha-secret-2026');                                      // ← your WAHA_API_KEY value
+}
+
 const DATA = {
   Students:   ['id','sid','name','class','section','batch','batchId','guardian','phone','fee','status','joined','updated','roll','feeType','feeFrom','school','archived','archivedAt','nextClass','nextYear'],
   Batches:    ['id','class','section','name','start','days','groupLink'],
@@ -31,7 +44,7 @@ const DATA = {
 const USERS = ['id','salt','hash','role','status','name','email','phone','address','speciality','trainers','services','logo','photo','lh1','lh2','lh3','lh4','token','exp','created','folderId','sheetId','note'];
 const PROFILE = ['name','email','phone','address','speciality','trainers','services','logo','photo','lh1','lh2','lh3','lh4'];
 const DAY = 864e5;
-const BUILD = '12'; // the app compares this to know whether you deployed the latest Code.gs
+const BUILD = '13'; // bumped from 12 → added WAHA WhatsApp integration
 
 /* ---------- small helpers ---------- */
 const P_ = () => PropertiesService.getScriptProperties();
@@ -205,6 +218,18 @@ function authorize() { sys_(); MailApp.getRemainingDailyQuota(); DriveApp.getRoo
 function doGet() { return out_({ ok: true, msg: 'TuitionPro API is running' }); }
 
 function doPost(e) {
+  /* ----- WAHA webhook (incoming WhatsApp messages) -----
+     If the request comes from WAHA (it has an "event" field and our ?key= matches),
+     log it and return. Otherwise fall through to the normal app logic. */
+  try {
+    const raw = (e && e.postData && e.postData.contents) ? e.postData.contents : '';
+    if (raw && raw.indexOf('"event"') >= 0) {
+      const key = (e.parameter && e.parameter.key) || '';
+      if (key && key === WAHA_KEY()) { logWahaEvent_(raw); return out_({ ok: true }); }
+      return err_('bad webhook key');
+    }
+  } catch (_) { /* fall through to normal handling */ }
+
   const lock = LockService.getScriptLock();
   lock.waitLock(25000);
   try {
@@ -318,6 +343,51 @@ function doPost(e) {
         bump_(u.id);
         return out_({ ok: true, ver: curVer_(u) });
       }
+
+      case 'waSend': {
+        // Send ONE WhatsApp message via WAHA. q = { chat: "88017...", text: "Hello" }
+        if (!WAHA_URL() || !WAHA_KEY()) return err_('WAHA not configured. Run setWaha() in Apps Script.');
+        const chat = String(q.chat || '').replace(/\D/g, '');
+        const text = String(q.text || '');
+        if (chat.length < 10 || !text) return err_('Bad chat or text');
+        try {
+          const resp = UrlFetchApp.fetch(WAHA_URL() + '/api/sendText', {
+            method: 'post',
+            contentType: 'application/json',
+            headers: { 'X-Api-Key': WAHA_KEY() },
+            muteHttpExceptions: true,
+            payload: JSON.stringify({ session: WAHA_SESSION, chatId: chat + '@c.us', text: text })
+          });
+          const code = resp.getResponseCode();
+          if (code === 200 || code === 201) return out_({ ok: true });
+          return err_('WAHA error ' + code + ': ' + resp.getContentText().slice(0, 300));
+        } catch (ex) { return err_('WAHA fetch failed: ' + ex); }
+      }
+
+      case 'waSendMany': {
+        // Send the same (or per-recipient) text to many numbers, with a delay between each.
+        // q = { items: [{ chat: "88017...", text: "Hello" }, ...], delayMs: 1500 }
+        if (!WAHA_URL() || !WAHA_KEY()) return err_('WAHA not configured.');
+        if (!Array.isArray(q.items) || q.items.length === 0 || q.items.length > 100) return err_('Send between 1 and 100 messages per call');
+        const delay = Math.max(800, Number(q.delayMs) || 1500);
+        const results = [];
+        for (const it of q.items) {
+          const chat = String(it.chat || '').replace(/\D/g, '');
+          if (chat.length < 10) { results.push({ chat, ok: false, error: 'bad number' }); continue; }
+          try {
+            const resp = UrlFetchApp.fetch(WAHA_URL() + '/api/sendText', {
+              method: 'post', contentType: 'application/json',
+              headers: { 'X-Api-Key': WAHA_KEY() }, muteHttpExceptions: true,
+              payload: JSON.stringify({ session: WAHA_SESSION, chatId: chat + '@c.us', text: String(it.text || '') })
+            });
+            const code = resp.getResponseCode();
+            results.push({ chat, ok: (code === 200 || code === 201), code: code });
+          } catch (ex) { results.push({ chat, ok: false, error: String(ex).slice(0, 200) }); }
+          Utilities.sleep(delay);
+        }
+        bump_(u.id);
+        return out_({ ok: true, results: results, sent: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length });
+      }
     }
 
     /* ----- Master Admin only ----- */
@@ -375,4 +445,24 @@ function doPost(e) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/* ---------- WAHA webhook logger ----------
+   Every incoming WhatsApp message is appended to a "WhatsAppInbox" sheet in the
+   system spreadsheet. Run once + a few test messages → open the system sheet to see them. */
+function logWahaEvent_(raw) {
+  try {
+    const ev = JSON.parse(raw);
+    if (ev.event !== 'message' || !ev.payload || ev.payload.fromMe) return;  // ignore outgoing + non-message events
+    const ss = sys_();
+    let sh = ss.getSheetByName('WhatsAppInbox');
+    if (!sh) {
+      sh = ss.insertSheet('WhatsAppInbox');
+      sh.getRange(1, 1, 1, 5).setValues([['ts', 'from', 'name', 'text', 'raw']]);
+      sh.setFrozenRows(1);
+      sh.getRange(2, 1, Math.max(1, sh.getMaxRows() - 1), 5).setNumberFormat('@');
+    }
+    const p = ev.payload;
+    sh.appendRow([new Date().toISOString(), p.from || '', p.pushName || '', (p.body || '').slice(0, 500), raw.slice(0, 1000)]);
+  } catch (_) {}
 }

@@ -100,9 +100,10 @@ function vWA() {
      <div class="wa-chips">${chips.map((k) => `<button type="button" class="chip" onclick="waIns('{${k}}')">{${k}}</button>`).join("")}</div>
      <div class="wa-in">
       <textarea class="wa-ta" id="wa_text" rows="1" placeholder="Write a message…">${esc(WA.txt[m])}</textarea>
-      <button type="button" class="wa-send" id="wa_send" onclick="waSend()" title="Open the next chat in WhatsApp">${WA_ICO.send}</button>
+      <button type="button" class="wa-send" id="wa_send" onclick="waSend()" title="Send the next message via WAHA">${WA_ICO.send}</button>
      </div>
      <div class="wa-hint" id="wa_hint"></div>
+     ${m === "student" ? "" : `<div class="wa-hint"><button type="button" class="btn" onclick="waSendAll()" style="margin-top:4px">Send to everyone via WAHA</button> &nbsp; <span class="mut">sends all at once with a 1.5s delay</span></div>`}
      <div class="wa-hint">Photos and files can't be attached by link. After a chat opens, use the paperclip in WhatsApp.</div>
     </footer>
    </section>
@@ -212,13 +213,47 @@ function waQ(keepScroll) {
   }
 }
 
-/* ---------- actions ---------- */
-function waOpen(id) {
-  const x = waTargets().ok.find((r) => r.s.id === id); if (!x) return;
+/* ---------- actions ----------
+   If your TuitionPro app is connected to a backend (config.js has API_URL) AND the backend
+   has WAHA wired up (you ran setWaha() in Apps Script), messages are sent automatically via WAHA.
+   Otherwise we fall back to the old click-to-chat behavior (open wa.me, you press Send). */
+async function waOpen(id) {
+  const x = waTargets().ok.find((r) => r.s.id === id);
+  if (!x) return;
   const text = waFill(WA.txt[WA.mode].trim(), x.s);
-  const w = window.open(waUrl(x.num, text), "tp_whatsapp"); // same tab every time
-  if (!w) { toast("Your browser blocked the pop-up. Allow pop-ups for this site and try again."); return; }
-  WA.done.add(id); waQ(true);
+  if (!text) { toast("Write a message first"); return; }
+
+  // No backend → old click-to-chat behavior
+  if (!API_URL) {
+    const w = window.open(waUrl(x.num, text), "tp_whatsapp");
+    if (!w) { toast("Your browser blocked the pop-up. Allow pop-ups for this site and try again."); return; }
+    WA.done.add(id); waQ(true);
+    return;
+  }
+
+  // Backend + WAHA → send automatically
+  try {
+    const j = await api("waSend", { chat: x.num, text });
+    if (j.ok) { WA.done.add(id); toast("Sent to " + x.s.name); waQ(true); }
+    else toast(j.error || "Send failed");
+  } catch (e) { toast(e.message); }
+}
+
+async function waSendAll() {
+  const { ok } = waTargets();
+  if (!ok.length) { toast("No recipients"); return; }
+  if (!API_URL) { toast("Connect to the Apps Script backend to send all at once via WAHA."); return; }
+  if (!confirm("Send the same message to " + ok.length + " recipients via WAHA?\n\nEach message is sent with a 1.5-second delay to avoid WhatsApp bans.")) return;
+
+  const items = ok.map((x) => ({ chat: x.num, text: waFill(WA.txt[WA.mode].trim(), x.s) }));
+  toast("Sending " + items.length + " messages via WAHA…");
+  try {
+    const j = await api("waSendMany", { items, delayMs: 1500 });
+    const sent = j.sent || 0, failed = j.failed || 0;
+    (j.results || []).forEach((r, i) => { if (r.ok && ok[i]) WA.done.add(ok[i].s.id); });
+    toast("Sent " + sent + (failed ? ", " + failed + " failed" : "") + (sent ? " - done" : ""));
+    waQ(true);
+  } catch (e) { toast(e.message); }
 }
 function waNext() { const n = waTargets().ok.find((r) => !WA.done.has(r.s.id)); if (n) waOpen(n.s.id); }
 function waSend() { waNext(); }
