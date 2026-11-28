@@ -35,7 +35,7 @@ function setWaha() {
 
 const DATA = {
   Students:   ['id','sid','name','class','section','batch','batchId','guardian','phone','fee','status','joined','updated','roll','feeType','feeFrom','school','archived','archivedAt','nextClass','nextYear'],
-  Batches:    ['id','class','section','name','start','days','groupLink'],
+  Batches:    ['id','class','section','name','start','days','groupLink','groupJid'],
   Attendance: ['id','date','studentId','batchId','status'],
   Fees:       ['id','studentId','month','amount','paid','date','kind','method','note','rcpt','batchId'],
   Exams:      ['id','name','subject','type','chapters','date','batchId','wf','mf','pf','vf','full','eachPass','created'],
@@ -44,7 +44,7 @@ const DATA = {
 const USERS = ['id','salt','hash','role','status','name','email','phone','address','speciality','trainers','services','logo','photo','lh1','lh2','lh3','lh4','token','exp','created','folderId','sheetId','note'];
 const PROFILE = ['name','email','phone','address','speciality','trainers','services','logo','photo','lh1','lh2','lh3','lh4'];
 const DAY = 864e5;
-const BUILD = '13'; // bumped from 12 → added WAHA WhatsApp integration
+const BUILD = '14'; // bumped: WAHA inbox schema + group creation + chat view
 
 /* ---------- small helpers ---------- */
 const P_ = () => PropertiesService.getScriptProperties();
@@ -345,21 +345,28 @@ function doPost(e) {
       }
 
       case 'waSend': {
-        // Send ONE WhatsApp message via WAHA. q = { chat: "88017...", text: "Hello" }
+        // Send ONE WhatsApp message via WAHA and log it to WhatsAppInbox so it appears in the chat history.
+        // q = { chat: "88017...", text: "Hello" }  OR  { chat: "<groupid>@g.us", text: "Hello", isGroup: true }
         if (!WAHA_URL() || !WAHA_KEY()) return err_('WAHA not configured. Run setWaha() in Apps Script.');
-        const chat = String(q.chat || '').replace(/\D/g, '');
+        const chatRaw = String(q.chat || '');
+        const isGroup = !!q.isGroup || chatRaw.indexOf('@g.us') >= 0;
+        const chat = isGroup ? chatRaw : chatRaw.replace(/\D/g, '');
         const text = String(q.text || '');
-        if (chat.length < 10 || !text) return err_('Bad chat or text');
+        if (!chat || !text) return err_('Bad chat or text');
+        const chatId = isGroup ? chat : (chat + '@c.us');
         try {
           const resp = UrlFetchApp.fetch(WAHA_URL() + '/api/sendText', {
             method: 'post',
             contentType: 'application/json',
             headers: { 'X-Api-Key': WAHA_KEY() },
             muteHttpExceptions: true,
-            payload: JSON.stringify({ session: WAHA_SESSION, chatId: chat + '@c.us', text: text })
+            payload: JSON.stringify({ session: WAHA_SESSION, chatId: chatId, text: text })
           });
           const code = resp.getResponseCode();
-          if (code === 200 || code === 201) return out_({ ok: true });
+          if (code === 200 || code === 201) {
+            logWahaOut_(chatId, text);
+            return out_({ ok: true });
+          }
           return err_('WAHA error ' + code + ': ' + resp.getContentText().slice(0, 300));
         } catch (ex) { return err_('WAHA fetch failed: ' + ex); }
       }
@@ -374,19 +381,96 @@ function doPost(e) {
         for (const it of q.items) {
           const chat = String(it.chat || '').replace(/\D/g, '');
           if (chat.length < 10) { results.push({ chat, ok: false, error: 'bad number' }); continue; }
+          const chatId = chat + '@c.us';
           try {
             const resp = UrlFetchApp.fetch(WAHA_URL() + '/api/sendText', {
               method: 'post', contentType: 'application/json',
               headers: { 'X-Api-Key': WAHA_KEY() }, muteHttpExceptions: true,
-              payload: JSON.stringify({ session: WAHA_SESSION, chatId: chat + '@c.us', text: String(it.text || '') })
+              payload: JSON.stringify({ session: WAHA_SESSION, chatId: chatId, text: String(it.text || '') })
             });
             const code = resp.getResponseCode();
-            results.push({ chat, ok: (code === 200 || code === 201), code: code });
+            const ok = (code === 200 || code === 201);
+            if (ok) logWahaOut_(chatId, String(it.text || ''));
+            results.push({ chat, ok: ok, code: code });
           } catch (ex) { results.push({ chat, ok: false, error: String(ex).slice(0, 200) }); }
           Utilities.sleep(delay);
         }
         bump_(u.id);
         return out_({ ok: true, results: results, sent: results.filter(r => r.ok).length, failed: results.filter(r => !r.ok).length });
+      }
+
+      case 'waInbox': {
+        // Return conversation history for one chatId. q = { chatId: "880176...@c.us" or "<gid>@g.us", since: "<iso ts>" }
+        // 'since' is optional — if provided, only rows newer than it are returned (for polling).
+        if (!WAHA_URL() && !WAHA_KEY()) { /* still allow read from local sheet */ }
+        const chatId = String(q.chatId || '').trim();
+        if (!chatId) return err_('chatId required');
+        const since = String(q.since || '');
+        const ss = sys_();
+        const sh = ss.getSheetByName('WhatsAppInbox');
+        if (!sh || sh.getLastRow() < 2) return out_({ ok: true, messages: [] });
+        const v = sh.getDataRange().getValues();
+        const h = v.shift();
+        const ci = { ts: h.indexOf('ts'), dir: h.indexOf('dir'), chat: h.indexOf('chatId'), name: h.indexOf('name'), text: h.indexOf('text') };
+        const msgs = [];
+        for (const r of v) {
+          if (String(r[ci.chat]) !== chatId) continue;
+          const ts = String(r[ci.ts]);
+          if (since && ts <= since) continue;
+          msgs.push({ ts: ts, dir: String(r[ci.dir]), name: String(r[ci.name] || ''), text: String(r[ci.text] || '') });
+        }
+        msgs.sort((a, b) => a.ts < b.ts ? -1 : 1);
+        return out_({ ok: true, messages: msgs, chatId: chatId });
+      }
+
+      case 'waListGroups': {
+        // Fetch the WhatsApp groups this session knows about. q = {} (no params)
+        if (!WAHA_URL() || !WAHA_KEY()) return err_('WAHA not configured.');
+        try {
+          const resp = UrlFetchApp.fetch(WAHA_URL() + '/api/' + WAHA_SESSION + '/groups', {
+            method: 'get',
+            headers: { 'X-Api-Key': WAHA_KEY() },
+            muteHttpExceptions: true
+          });
+          const code = resp.getResponseCode();
+          if (code !== 200) return err_('WAHA error ' + code + ': ' + resp.getContentText().slice(0, 300));
+          const groups = JSON.parse(resp.getContentText()).map(g => ({ id: g.id || '', name: g.name || g.subject || '', size: (g.participants || g.size || 0) }));
+          return out_({ ok: true, groups: groups });
+        } catch (ex) { return err_('WAHA fetch failed: ' + ex); }
+      }
+
+      case 'waCreateGroup': {
+        // Create a WhatsApp group with the students of a batch and save its JID on the batch.
+        // q = { batchId: "...", participants: ["88017...", "88018..."] }
+        if (!WAHA_URL() || !WAHA_KEY()) return err_('WAHA not configured.');
+        if (!q.batchId) return err_('batchId required');
+        const b = DB_Batches_(users, u, q.batchId);
+        if (!b) return err_('Batch not found');
+        if (b.groupJid) return err_('This batch already has a WhatsApp group: ' + b.groupJid);
+        if (!Array.isArray(q.participants) || q.participants.length === 0) return err_('No participants');
+        // WAHA expects participants as objects with .id = "<phone>@c.us"
+        const participants = q.participants.map(p => ({ id: p.replace(/\D/g, '') + '@c.us' }));
+        try {
+          const resp = UrlFetchApp.fetch(WAHA_URL() + '/api/' + WAHA_SESSION + '/groups', {
+            method: 'post', contentType: 'application/json',
+            headers: { 'X-Api-Key': WAHA_KEY() }, muteHttpExceptions: true,
+            payload: JSON.stringify({ name: bLabel_(b) || ('TuitionPro ' + b.id), participants: participants })
+          });
+          const code = resp.getResponseCode();
+          if (code !== 200 && code !== 201) return err_('WAHA error ' + code + ': ' + resp.getContentText().slice(0, 300));
+          const g = JSON.parse(resp.getContentText());
+          // WAHA returns the group JID in various nested locations — try them all
+          const gid = g.id || g.groupId ||
+                      (g._data && g._data.id && (g._data.id._serialized || g._data.id)) ||
+                      (g.id && g.id._serialized) ||
+                      '';
+          const cleanGid = String(gid).indexOf('@g.us') >= 0 ? String(gid).match(/[\d-]+@g\.us/)[0] : '';
+          if (!cleanGid) return err_('Group created but JID not found in response: ' + resp.getContentText().slice(0, 300));
+          b.groupJid = cleanGid;
+          put_(ws_(users, u).getSheetByName('Batches'), b);
+          bump_(u.id);
+          return out_({ ok: true, groupJid: cleanGid, name: bLabel_(b) });
+        } catch (ex) { return err_('WAHA fetch failed: ' + ex); }
       }
     }
 
@@ -448,21 +532,86 @@ function doPost(e) {
 }
 
 /* ---------- WAHA webhook logger ----------
-   Every incoming WhatsApp message is appended to a "WhatsAppInbox" sheet in the
-   system spreadsheet. Run once + a few test messages → open the system sheet to see them. */
+   Inbox schema: ts | dir | chatId | name | text | raw
+     dir = "in" (incoming from WhatsApp) or "out" (sent via waSend)
+     chatId = the conversation key: "<phone>@c.us" for 1-on-1, "<gid>@g.us" for groups
+     name = sender display name (incoming only; empty for outgoing)
+   The same sheet is used for both directions so waInbox can return a single conversation. */
+function inboxSheet_() {
+  const ss = sys_();
+  let sh = ss.getSheetByName('WhatsAppInbox');
+  if (!sh) {
+    sh = ss.insertSheet('WhatsAppInbox');
+    sh.getRange(1, 1, 1, 6).setValues([['ts', 'dir', 'chatId', 'name', 'text', 'raw']]);
+    sh.setFrozenRows(1);
+    sh.getRange(2, 1, Math.max(1, sh.getMaxRows() - 1), 6).setNumberFormat('@');
+  }
+  return sh;
+}
+
+// Incoming message from WAHA webhook. Migrates the old 5-column sheet if needed.
 function logWahaEvent_(raw) {
   try {
     const ev = JSON.parse(raw);
-    if (ev.event !== 'message' || !ev.payload || ev.payload.fromMe) return;  // ignore outgoing + non-message events
-    const ss = sys_();
-    let sh = ss.getSheetByName('WhatsAppInbox');
-    if (!sh) {
-      sh = ss.insertSheet('WhatsAppInbox');
-      sh.getRange(1, 1, 1, 5).setValues([['ts', 'from', 'name', 'text', 'raw']]);
-      sh.setFrozenRows(1);
-      sh.getRange(2, 1, Math.max(1, sh.getMaxRows() - 1), 5).setNumberFormat('@');
-    }
+    if (ev.event !== 'message' || !ev.payload || ev.payload.fromMe) return;  // skip outgoing + non-message events
+    const sh = inboxSheet_();
+    migrateInbox_(sh);
     const p = ev.payload;
-    sh.appendRow([new Date().toISOString(), p.from || '', p.pushName || '', (p.body || '').slice(0, 500), raw.slice(0, 1000)]);
+    const to = String(p.to || '');
+    const from = String(p.from || '');
+    let chatId = '', name = '';
+    if (to.indexOf('@g.us') >= 0) {
+      // group message: conversation key is the group JID, sender is the participant
+      chatId = to;
+      name = String(p.pushName || p.author || p.participant || 'Group member');
+    } else {
+      // 1-on-1: conversation key is the other person's JID (which is `from`)
+      chatId = from;
+      name = String(p.pushName || '');
+    }
+    sh.appendRow([new Date().toISOString(), 'in', chatId, name.slice(0, 80), (p.body || '').slice(0, 1500), raw.slice(0, 1500)]);
   } catch (_) {}
+}
+
+// Outgoing message we sent via waSend / waSendMany. Same schema.
+function logWahaOut_(chatId, text) {
+  try {
+    const sh = inboxSheet_();
+    migrateInbox_(sh);
+    sh.appendRow([new Date().toISOString(), 'out', String(chatId), '', String(text || '').slice(0, 1500), '']);
+  } catch (_) {}
+}
+
+// If the sheet was created by an older Code.gs (5 columns), add the missing columns and rename.
+function migrateInbox_(sh) {
+  const h = sh.getRange(1, 1, 1, Math.max(1, sh.getLastColumn())).getValues()[0];
+  const want = ['ts', 'dir', 'chatId', 'name', 'text', 'raw'];
+  const oldHdr = ['ts', 'from', 'name', 'text', 'raw'];
+  if (h.length === 5 && h[1] === 'from') {
+    // migrate: rename 'from' to 'dir', insert 'chatId' after it, set dir='in' for existing rows
+    sh.getRange(1, 2).setValue('dir');
+    sh.insertColumnAfter(2);
+    sh.getRange(1, 3).setValue('chatId');
+    if (sh.getLastRow() >= 2) {
+      const n = sh.getLastRow() - 1;
+      sh.getRange(2, 2, n, 1).setValue('in');                // mark all old rows as incoming
+      sh.getRange(2, 3, n, 1).setValue('=D2');               // copy name → chatId placeholder (best effort)
+    }
+  }
+}
+
+// Helper: fetch a batch row from the user's spreadsheet
+function DB_Batches_(users, u, batchId) {
+  const ss = ws_(users, u);
+  const rows = rows_(ss.getSheetByName('Batches'), DATA.Batches);
+  return rows.find(r => String(r.id) === String(batchId)) || null;
+}
+
+// Helper: batch label (duplicated from app.js for backend use)
+function bLabel_(b) {
+  if (!b) return '';
+  const cls = String(b.class || '');
+  const sec = String(b.section || '');
+  const nm = String(b.name || '');
+  return [cls && ('Class ' + cls), sec && ('Sec ' + sec), nm].filter(Boolean).join(' - ');
 }

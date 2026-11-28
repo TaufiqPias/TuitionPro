@@ -1418,16 +1418,26 @@ tr.clk { cursor: pointer; }
 .wa-blank b { font-size: 16px; color: var(--tx); }
 .wa-blank-i svg { width: 56px; height: 56px; }
 
-.wa-comp { padding: 8px 12px 10px; border-top: 1px solid var(--bd); }
+.wa-comp { padding: 8px 12px 10px; border-top: 1px solid var(--bd); background: var(--glass, var(--bg)); }
 .wa-chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; }
 .wa-chips .chip { flex: none; cursor: pointer; border: 1px solid var(--bd); background: var(--inp); color: var(--tx); }
-.wa-in { display: flex; align-items: flex-end; gap: 8px; }
-.wa-ta { flex: 1; min-width: 0; max-height: 140px; resize: none; border-radius: 20px; border: 1px solid var(--bd); background: var(--inp); padding: 9px 14px; line-height: 1.4; outline: none; }
-.wa-ta:focus { border-color: var(--ac); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ac) 25%, transparent); }
-.wa-send { width: 40px; height: 40px; flex: none; border-radius: 50%; border: 0; background: var(--ac); color: var(--onac); display: grid; place-items: center; cursor: pointer; }
-.wa-send svg { width: 19px; height: 19px; }
-.wa-send:disabled { opacity: 0.4; cursor: not-allowed; }
+.wa-in { display: flex; align-items: flex-end; gap: 8px; background: var(--inp); border-radius: 22px; padding: 4px 4px 4px 14px; border: 1px solid var(--bd); transition: border-color 0.15s, box-shadow 0.15s; }
+.wa-in:focus-within { border-color: var(--ac); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ac) 22%, transparent); }
+.wa-ta { flex: 1; min-width: 0; min-height: 40px; max-height: 200px; resize: none; border: 0; background: transparent; padding: 10px 0; line-height: 1.45; font-size: 14.5px; outline: none; color: var(--tx); }
+.wa-ta::placeholder { color: var(--mut); }
+.wa-send { width: 42px; height: 42px; flex: none; border-radius: 50%; border: 0; background: var(--ac); color: var(--onac); display: grid; place-items: center; cursor: pointer; transition: transform 0.08s, opacity 0.15s; }
+.wa-send:hover:not(:disabled) { transform: scale(1.05); }
+.wa-send svg { width: 20px; height: 20px; }
+.wa-send:disabled { opacity: 0.35; cursor: not-allowed; background: var(--mut); }
 .wa-hint { font-size: 11.5px; color: var(--mut); margin-top: 6px; padding-left: 4px; }
+.wa-msg.out .wa-bub .wa-meta { color: var(--onac); opacity: 0.85; display: flex; align-items: center; gap: 3px; justify-content: flex-end; }
+.wa-msg.out .wa-bub .wa-meta svg { width: 14px; height: 14px; }
+.wa-msg.in .wa-bub .wa-meta { color: var(--mut); }
+/* date separator */
+.wa-date { align-self: center; font-size: 11px; color: var(--mut); background: var(--inp); padding: 3px 12px; border-radius: 10px; margin: 8px 0; border: 1px solid var(--bd); }
+/* chat background pattern (subtle dots, like WhatsApp) */
+.wa-thread { background-image: radial-gradient(color-mix(in srgb, var(--ac) 8%, transparent) 1px, transparent 1px); background-size: 22px 22px; background-color: color-mix(in srgb, var(--ac) 5%, transparent); }
+/* "Group ready" / "No group" tag styling already exists; tag.ok is reused */
 @media (max-width: 820px) {
   .wa { grid-template-columns: 1fr; height: calc(100vh - 130px); height: calc(100dvh - 130px); }
   .wa-chat { display: none; }
