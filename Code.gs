@@ -420,7 +420,32 @@ function doPost(e) {
           msgs.push({ ts: ts, dir: String(r[ci.dir]), name: String(r[ci.name] || ''), text: String(r[ci.text] || '') });
         }
         msgs.sort((a, b) => a.ts < b.ts ? -1 : 1);
-        return out_({ ok: true, messages: msgs, chatId: chatId });
+        const lim = Math.min(1000, Math.max(20, Number(q.limit) || 300));   // first load returns only the newest messages
+        return out_({ ok: true, messages: (!since && msgs.length > lim) ? msgs.slice(-lim) : msgs, chatId: chatId });
+      }
+
+      case 'waChats': {
+        // Conversation list for the chat sidebar: one row per chatId with its newest message.
+        // Returns { chats: [{ id, name, from, text, ts, dir, n }] } newest first (max 200).
+        const sh = sys_().getSheetByName('WhatsAppInbox');
+        if (!sh || sh.getLastRow() < 2) return out_({ ok: true, chats: [] });
+        const hdr = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+        const ci = { ts: hdr.indexOf('ts'), dir: hdr.indexOf('dir'), chat: hdr.indexOf('chatId'), name: hdr.indexOf('name'), text: hdr.indexOf('text') };
+        if (ci.ts < 0 || ci.chat < 0 || ci.dir < 0) return out_({ ok: true, chats: [] });
+        const width = Math.max(ci.ts, ci.dir, ci.chat, ci.name, ci.text) + 1;   // skip the big 'raw' column
+        const rows = sh.getRange(2, 1, sh.getLastRow() - 1, width).getValues();
+        const map = {};
+        for (const r of rows) {
+          const id = String(r[ci.chat] || '');
+          if (id.indexOf('@') < 0) continue;
+          const ts = String(r[ci.ts]), dir = String(r[ci.dir]);
+          const c = map[id] || (map[id] = { id: id, name: '', from: '', text: '', ts: '', dir: '', n: 0 });
+          c.n++;
+          if (ts >= c.ts) { c.ts = ts; c.dir = dir; c.text = String(r[ci.text] || '').slice(0, 140); c.from = dir === 'in' ? String(r[ci.name] || '') : ''; }
+          if (dir === 'in' && id.indexOf('@g.us') < 0 && r[ci.name]) c.name = String(r[ci.name]);
+        }
+        const chats = Object.keys(map).map(k => map[k]).sort((a, b) => a.ts < b.ts ? 1 : -1).slice(0, 200);
+        return out_({ ok: true, chats: chats });
       }
 
       case 'waListGroups': {
